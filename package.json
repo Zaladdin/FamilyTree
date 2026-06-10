@@ -1,0 +1,34 @@
+{
+  "name": "family-tree",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:init": "node scripts/reset_sqlite.mjs && npm run prisma:push:dev",
+    "db:seeded": "npm run db:init && npm run prisma:seed",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:push:dev": "prisma db push --accept-data-loss",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:seed": "node prisma/seed.mjs",
+    "test": "npm run db:init && npm run prisma:seed && tsx --test --test-concurrency=1 tests/*.test.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.2",
+    "next": "15.3.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.29",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.1.5",
+    "prisma": "^6.8.2",
+    "tsx": "^4.22.3",
+    "typescript": "5.8.3"
+  }
+}

@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Gender {
+  male
+  female
+}
+
+enum PersonStatus {
+  living
+  deceased
+}
+
+enum RelationshipType {
+  parent
+  spouse
+}
+
+enum FamilyRole {
+  owner
+  admin
+  editor
+  member
+  guest
+}
+
+enum DigitizationTaskStatus {
+  planned
+  in_progress
+  ready
+}
+
+enum MediaAssetType {
+  photo
+  audio
+}
+
+enum AuditAction {
+  person_created
+  person_updated
+  media_added
+  media_deleted
+  person_archived
+  person_restored
+  story_added
+}
+
+model Family {
+  id                String              @id
+  slug              String              @unique
+  title             String
+  surname           String
+  description       String
+  region            String
+  coverQuote        String
+  peopleCount       Int                 @default(0)
+  photosCount       Int                 @default(0)
+  audioCount        Int                 @default(0)
+  storiesCount      Int                 @default(0)
+  contributorsCount Int                 @default(0)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  memberships       FamilyMembership[]
+  digitizationTasks DigitizationTask[]
+  people            Person[]
+  relationships     Relationship[]
+  auditLogs         AuditLog[]
+}
+
+model User {
+  id           String             @id @default(cuid())
+  firstName    String
+  lastName     String
+  email        String             @unique
+  passwordHash String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  memberships  FamilyMembership[]
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model FamilyMembership {
+  id        String     @id @default(cuid())
+  familyId  String
+  userId    String?
+  name      String
+  role      FamilyRole
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  family    Family     @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([familyId])
+  @@index([userId])
+  @@unique([familyId, userId])
+}
+
+model DigitizationTask {
+  id        String                 @id @default(cuid())
+  familyId  String
+  title     String
+  owner     String
+  status    DigitizationTaskStatus
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  family    Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+}
+
+model Person {
+  id             String          @id
+  familyId       String
+  firstName      String
+  lastName       String
+  middleName     String          @default("")
+  gender         Gender
+  birthDate      String
+  deathDate      String?
+  birthPlace     String
+  status         PersonStatus
+  isArchived     Boolean         @default(false)
+  biography      String
+  note           String?
+  photosCount    Int             @default(0)
+  audioCount     Int             @default(0)
+  documentsCount Int             @default(0)
+  memoryTitle    String?
+  memoryNarrator String?
+  memoryDuration String?
+  memorySummary  String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  family         Family          @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  mediaAssets    MediaAsset[]
+  stories        Story[]
+  timelineEvents TimelineEvent[]
+  outgoing       Relationship[]  @relation("RelationshipFromPerson")
+  incoming       Relationship[]  @relation("RelationshipToPerson")
+
+  @@unique([familyId, firstName, lastName, middleName, birthDate])
+  @@index([familyId])
+}
+
+model MediaAsset {
+  id        String         @id @default(cuid())
+  personId   String
+  type      MediaAssetType
+  title     String
+  storagePath String
+  mimeType  String
+  size      Int
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  person     Person         @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, type])
+}
+
+model TimelineEvent {
+  id        String   @id @default(cuid())
+  personId   String
+  label     String
+  order     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, order])
+}
+
+model Story {
+  id         String   @id @default(cuid())
+  personId   String
+  title      String
+  body       String
+  narrator   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([personId, createdAt])
+}
+
+model Relationship {
+  id           String           @id @default(cuid())
+  familyId     String
+  fromPersonId String
+  toPersonId   String
+  type         RelationshipType
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  family       Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  fromPerson   Person           @relation("RelationshipFromPerson", fields: [fromPersonId], references: [id], onDelete: Cascade)
+  toPerson     Person           @relation("RelationshipToPerson", fields: [toPersonId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, fromPersonId, toPersonId, type])
+  @@index([familyId])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  familyId    String
+  action     AuditAction
+  actorName  String
+  personId   String?
+  personName String?
+  message    String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  family     Family      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, createdAt])
+}

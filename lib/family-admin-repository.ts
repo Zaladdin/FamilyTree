@@ -1,4 +1,4 @@
-import { FamilyRole } from "@prisma/client";
+import { FamilyRole, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildFamilySlug, CreateFamilyInput } from "@/lib/family-management";
 import { HttpError } from "@/lib/http-error";
@@ -37,54 +37,73 @@ export async function createFamilySpace({ input, user }: CreateFamilyParams) {
     throw new HttpError(400, "На одном аккаунте пока можно создать не больше 10 семей.");
   }
 
-  const slug = await createUniqueFamilySlug(buildFamilySlug(input.title, input.surname));
+  const baseSlug = buildFamilySlug(input.title, input.surname);
   const coverQuote = `Архив семьи ${input.surname}: люди, связи, истории, фотографии и голоса памяти в одном пространстве.`;
+  const ownerName = `${user.firstName} ${user.lastName}`;
 
-  const family = await prisma.family.create({
-    data: {
-      id: `family-${slug}`,
-      slug,
-      title: input.title,
-      surname: input.surname,
-      description: input.description,
-      region: input.region,
-      coverQuote,
-      contributorsCount: 1,
-      memberships: {
-        create: {
-          userId: user.id,
-          name: `${user.firstName} ${user.lastName}`,
-          role: FamilyRole.owner,
-        },
-      },
-      digitizationTasks: {
-        create: [
-          {
-            title: "Добавить первого человека в дерево",
-            owner: `${user.firstName} ${user.lastName}`,
-            status: "planned",
-          },
-          {
-            title: "Загрузить первые семейные фотографии",
-            owner: `${user.firstName} ${user.lastName}`,
-            status: "planned",
-          },
-        ],
-      },
-      auditLogs: {
-        create: {
-          action: "person_created",
-          actorName: `${user.firstName} ${user.lastName}`,
-          message: `${user.firstName} ${user.lastName} создал(а) семейное пространство "${input.title}".`,
-        },
-      },
-    },
-    select: {
-      slug: true,
-    },
-  });
+  // A unique slug is chosen up front, but two concurrent creates can still race
+  // to the same value. Retry on the unique-constraint violation with a fresh
+  // candidate instead of surfacing an unhandled error.
+  const MAX_ATTEMPTS = 5;
 
-  return family;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const slug = await createUniqueFamilySlug(baseSlug);
+
+    try {
+      return await prisma.family.create({
+        data: {
+          id: `family-${slug}`,
+          slug,
+          title: input.title,
+          surname: input.surname,
+          description: input.description,
+          region: input.region,
+          coverQuote,
+          contributorsCount: 1,
+          memberships: {
+            create: {
+              userId: user.id,
+              name: ownerName,
+              role: FamilyRole.owner,
+            },
+          },
+          digitizationTasks: {
+            create: [
+              {
+                title: "Добавить первого человека в дерево",
+                owner: ownerName,
+                status: "planned",
+              },
+              {
+                title: "Загрузить первые семейные фотографии",
+                owner: ownerName,
+                status: "planned",
+              },
+            ],
+          },
+          auditLogs: {
+            create: {
+              action: "person_created",
+              actorName: ownerName,
+              message: `${ownerName} создал(а) семейное пространство "${input.title}".`,
+            },
+          },
+        },
+        select: { slug: true },
+      });
+    } catch (error) {
+      const isSlugCollision =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        attempt < MAX_ATTEMPTS - 1;
+
+      if (!isSlugCollision) {
+        throw error;
+      }
+    }
+  }
+
+  throw new HttpError(500, "Не удалось создать семейное пространство. Попробуйте ещё раз.");
 }
 
 export async function listFamiliesForUser(userId: string): Promise<UserFamilySummary[]> {

@@ -734,6 +734,8 @@ button {
   position: absolute;
   left: 32px;
   bottom: 22px;
+  max-width: 320px;
+  pointer-events: none;
   padding: 10px 14px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.86);
@@ -1845,6 +1847,6 @@ button {
 
   .gene-node.medium,
   .gene-node.small {
-    width: auto;
+    width: 168px;
   }
 }

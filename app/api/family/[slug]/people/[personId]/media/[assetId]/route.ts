@@ -6,6 +6,7 @@ import {
   getMediaAssetForFamily,
 } from "@/lib/family-repository";
 import { readUploadByStoragePath } from "@/lib/media-storage";
+import { assertSameOrigin } from "@/lib/request-validation";
 
 type RouteContext = {
   params: Promise<{ slug: string; personId: string; assetId: string }>;
@@ -46,10 +47,11 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   const { slug, personId, assetId } = await context.params;
 
   try {
+    assertSameOrigin(request);
     const access = await requireFamilyRole(slug, ["owner", "admin", "editor"]);
     const asset = await deleteMediaAssetFromPerson({
       slug,

@@ -279,6 +279,40 @@ async function createAuditLog(
   });
 }
 
+// Recomputes the denormalized Family counters from the underlying rows so they
+// can never drift out of sync (e.g. after archiving, restoring, or cascade
+// deletes). Stats reflect the active, non-archived tree.
+async function recomputeFamilyStats(
+  transaction: Prisma.TransactionClient,
+  familyId: string,
+) {
+  const activePersonFilter = { familyId, isArchived: false } as const;
+
+  const [peopleCount, photosCount, audioCount, storiesCount, contributorsCount] =
+    await Promise.all([
+      transaction.person.count({ where: activePersonFilter }),
+      transaction.mediaAsset.count({
+        where: { type: "photo", person: activePersonFilter },
+      }),
+      transaction.mediaAsset.count({
+        where: { type: "audio", person: activePersonFilter },
+      }),
+      transaction.story.count({ where: { person: activePersonFilter } }),
+      transaction.familyMembership.count({ where: { familyId } }),
+    ]);
+
+  await transaction.family.update({
+    where: { id: familyId },
+    data: {
+      peopleCount,
+      photosCount,
+      audioCount,
+      storiesCount,
+      contributorsCount,
+    },
+  });
+}
+
 async function loadFamilyRecordBySlug(slug: string) {
   return prisma.family.findUnique({
     where: { slug },
@@ -421,14 +455,7 @@ export async function createPersonInFamily(
       });
     }
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data: {
-        peopleCount: {
-          increment: 1,
-        },
-      },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,
@@ -493,36 +520,36 @@ export async function updatePersonInFamily(
     );
   }
 
-  await prisma.person.update({
-    where: {
-      id: currentPerson.id,
-    },
-    data: {
-      firstName: normalizedInput.firstName,
-      lastName: normalizedInput.lastName,
-      middleName: normalizedInput.middleName || "",
-      gender: normalizedInput.gender,
-      birthDate: normalizedInput.birthDate,
-      birthPlace: normalizedInput.birthPlace,
-      biography: normalizedInput.biography,
-      note: normalizedInput.note || null,
-      status: normalizedInput.status,
-      deathDate:
-        normalizedInput.status === "deceased" && normalizedInput.deathDate
-          ? normalizedInput.deathDate
-          : null,
-    },
-  });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.person.update({
+      where: {
+        id: currentPerson.id,
+      },
+      data: {
+        firstName: normalizedInput.firstName,
+        lastName: normalizedInput.lastName,
+        middleName: normalizedInput.middleName || "",
+        gender: normalizedInput.gender,
+        birthDate: normalizedInput.birthDate,
+        birthPlace: normalizedInput.birthPlace,
+        biography: normalizedInput.biography,
+        note: normalizedInput.note || null,
+        status: normalizedInput.status,
+        deathDate:
+          normalizedInput.status === "deceased" && normalizedInput.deathDate
+            ? normalizedInput.deathDate
+            : null,
+      },
+    });
 
-  await prisma.auditLog.create({
-    data: {
+    await createAuditLog(transaction, {
       familyId: familyRecord.id,
       action: "person_updated",
       actorName,
       personId: currentPerson.id,
       personName: formatPersonName(currentPerson),
       message: `${actorName} обновил(а) карточку человека "${formatPersonName(currentPerson)}".`,
-    },
+    });
   });
 
   return {
@@ -584,14 +611,7 @@ export async function createStoryForPerson(params: {
       },
     });
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data: {
-        storiesCount: {
-          increment: 1,
-        },
-      },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,
@@ -668,21 +688,7 @@ export async function createMediaAssetForPerson(params: {
             },
     });
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data:
-        type === "photo"
-          ? {
-              photosCount: {
-                increment: 1,
-              },
-            }
-          : {
-              audioCount: {
-                increment: 1,
-              },
-            },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,
@@ -755,21 +761,7 @@ export async function deleteMediaAssetFromPerson(params: {
             },
     });
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data:
-        asset.type === "photo"
-          ? {
-              photosCount: {
-                decrement: 1,
-              },
-            }
-          : {
-              audioCount: {
-                decrement: 1,
-              },
-            },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,
@@ -853,14 +845,7 @@ export async function archivePersonInFamily(params: {
       },
     });
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data: {
-        peopleCount: {
-          decrement: 1,
-        },
-      },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,
@@ -905,14 +890,7 @@ export async function restorePersonInFamily(params: {
       },
     });
 
-    await transaction.family.update({
-      where: { id: familyRecord.id },
-      data: {
-        peopleCount: {
-          increment: 1,
-        },
-      },
-    });
+    await recomputeFamilyStats(transaction, familyRecord.id);
 
     await createAuditLog(transaction, {
       familyId: familyRecord.id,

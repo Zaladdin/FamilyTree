@@ -619,6 +619,7 @@ export function FamilyApp({
                 </label>
               </div>
 
+              {family.people.length > 0 ? (
               <div className="form-grid">
                 <label className="form-field">
                   <span>Кем приходится выбранному человеку</span>
@@ -660,6 +661,7 @@ export function FamilyApp({
                   </select>
                 </label>
               </div>
+              ) : null}
 
               <label className="form-field">
                 <span>Краткая биография</span>

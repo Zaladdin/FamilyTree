@@ -2,20 +2,23 @@
   "name": "family-tree",
   "version": "0.1.0",
   "private": true,
+  "prisma": {
+    "seed": "node prisma/seed.mjs"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:init": "node scripts/reset_sqlite.mjs && npm run prisma:push:dev",
-    "db:seeded": "npm run db:init && npm run prisma:seed",
+    "db:up": "docker compose up -d db",
+    "redis:up": "docker compose up -d redis",
+    "db:down": "docker compose down",
+    "db:migrate": "prisma migrate dev",
+    "db:reset": "prisma migrate reset --force",
+    "db:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "prisma:push:dev": "prisma db push --accept-data-loss",
-    "prisma:migrate:dev": "prisma migrate dev",
-    "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.mjs",
-    "test": "npm run db:init && npm run prisma:seed && tsx --test --test-concurrency=1 tests/*.test.ts"
+    "test": "prisma generate && tsx --test --test-concurrency=1 tests/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
@@ -23,10 +26,15 @@
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
+  "optionalDependencies": {
+    "ioredis": "^5.4.1"
+  },
   "devDependencies": {
     "@types/node": "22.15.29",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.1.5",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "15.3.3",
     "prisma": "^6.8.2",
     "tsx": "^4.22.3",
     "typescript": "5.8.3"

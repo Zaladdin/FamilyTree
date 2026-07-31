@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser, normalizeSafeRedirectPath } from "@/lib/auth";
-import Link from "next/link";
 import { AuthShell } from "@/components/auth-shell";
 import { SiteHeader } from "@/components/site-header";
 
@@ -38,20 +37,17 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <form action="/api/auth/login" className="form-stack" method="post">
           <label className="form-field">
             <span>Email</span>
-            <input defaultValue="timur@rodovo.app" name="email" type="email" />
+            <input autoComplete="email" name="email" required type="email" />
           </label>
           <label className="form-field">
             <span>Пароль</span>
-            <input defaultValue="12345678" name="password" type="password" />
+            <input autoComplete="current-password" name="password" required type="password" />
           </label>
           <input name="redirectTo" type="hidden" value={safeRedirectTo} />
           {error ? <p className="form-message error">{error}</p> : null}
           <div className="form-actions">
             <button className="primary-button" type="submit">
               Войти в аккаунт
-            </button>
-            <button className="ghost-button" type="button">
-              Восстановить доступ
             </button>
           </div>
         </form>

@@ -2,6 +2,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { createFamilySpace, listFamiliesForUser } from "@/lib/family-admin-repository";
 import { prisma } from "@/lib/prisma";
+import { slugify } from "@/lib/slug";
 
 after(async () => {
   await prisma.$disconnect();
@@ -17,11 +18,16 @@ test("createFamilySpace creates owner membership and unique slug", async () => {
     },
   });
 
+  // Unique surname per run: slugs live in a shared dev database, so a fixed
+  // surname would collide with leftovers from previous runs.
+  const surname = `Создатели${Date.now()}`;
+  const expectedSlug = slugify(surname);
+
   const firstFamily = await createFamilySpace({
     user,
     input: {
       title: "Род Создателей",
-      surname: "Создатели",
+      surname,
       region: "Баку",
       description: "Первая семья для теста.",
     },
@@ -31,14 +37,15 @@ test("createFamilySpace creates owner membership and unique slug", async () => {
     user,
     input: {
       title: "Род Создателей",
-      surname: "Создатели",
+      surname,
       region: "Баку",
       description: "Вторая семья для теста.",
     },
   });
 
-  assert.equal(firstFamily.slug, "создатели");
-  assert.equal(secondFamily.slug, "создатели-2");
+  assert.match(expectedSlug, /^[a-z0-9-]+$/, "слаг должен быть ASCII после транслитерации");
+  assert.equal(firstFamily.slug, expectedSlug);
+  assert.equal(secondFamily.slug, `${expectedSlug}-2`);
 
   const membership = await prisma.familyMembership.findFirst({
     where: {

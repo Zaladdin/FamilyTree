@@ -21,8 +21,22 @@ type AuthUser = {
   email: string;
 };
 
+// Pragmatic email shape check: single @, non-empty local part, dotted domain,
+// no whitespace. Not RFC-exhaustive, but rejects obviously invalid input.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+export function assertValidEmail(email: string) {
+  const normalized = normalizeEmail(email);
+
+  if (normalized.length > 254 || !EMAIL_PATTERN.test(normalized)) {
+    throw new HttpError(400, "Укажите корректный email.");
+  }
+
+  return normalized;
 }
 
 export function hashSessionToken(token: string) {
@@ -93,6 +107,14 @@ export async function verifyPassword(password: string, storedHash: string) {
   return timingSafeEqual(derived, storedBuffer);
 }
 
+export async function purgeExpiredSessions() {
+  return prisma.session.deleteMany({
+    where: {
+      expiresAt: { lte: new Date() },
+    },
+  });
+}
+
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("hex");
   const tokenHash = hashSessionToken(token);
@@ -105,6 +127,10 @@ export async function createSession(userId: string) {
       expiresAt,
     },
   });
+
+  // Best-effort housekeeping so the sessions table does not grow unbounded.
+  // Failures here must not block sign-in.
+  await purgeExpiredSessions().catch(() => undefined);
 
   return { token, expiresAt };
 }
@@ -245,7 +271,7 @@ export async function registerUser(params: {
   email: string;
   password: string;
 }) {
-  const email = normalizeEmail(params.email);
+  const email = assertValidEmail(params.email);
   const existingUser = await prisma.user.findUnique({
     where: { email },
     select: { id: true },

@@ -25,3 +25,8 @@ prisma/node-write-test.txt
 .codex-dev-err.log
 .codex-start-out.log
 .codex-start-err.log
+
+# Editor/FUSE artifacts and build info
+.fuse_hidden*
+**/.fuse_hidden*
+*.tsbuildinfo

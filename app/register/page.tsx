@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import Link from "next/link";
 import { AuthShell } from "@/components/auth-shell";
 import { SiteHeader } from "@/components/site-header";
 
@@ -39,20 +38,20 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
           <div className="form-grid">
             <label className="form-field">
               <span>Имя</span>
-              <input defaultValue="Тимур" name="firstName" />
+              <input autoComplete="given-name" name="firstName" required />
             </label>
             <label className="form-field">
               <span>Фамилия</span>
-              <input defaultValue="Ахмедов" name="lastName" />
+              <input autoComplete="family-name" name="lastName" required />
             </label>
           </div>
           <label className="form-field">
             <span>Email</span>
-            <input defaultValue="timur@rodovo.app" name="email" type="email" />
+            <input autoComplete="email" name="email" required type="email" />
           </label>
           <label className="form-field">
             <span>Пароль</span>
-            <input defaultValue="12345678" name="password" type="password" />
+            <input autoComplete="new-password" minLength={8} name="password" required type="password" />
           </label>
           {error ? <p className="form-message error">{error}</p> : null}
           <div className="form-actions">

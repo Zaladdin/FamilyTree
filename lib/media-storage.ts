@@ -8,6 +8,27 @@ const allowedMimeTypes: Record<MediaAssetType, string[]> = {
   audio: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm", "audio/mp4"],
 };
 
+const maxUploadBytes: Record<MediaAssetType, number> = {
+  photo: 10 * 1024 * 1024,
+  audio: 20 * 1024 * 1024,
+};
+
+// Guard the declared file size BEFORE the file is read into memory, so an
+// oversized upload cannot exhaust server memory via file.arrayBuffer().
+export function assertUploadSizeWithinLimit(fileSize: number, type: MediaAssetType) {
+  if (!fileSize) {
+    throw new Error("Файл пустой.");
+  }
+
+  if (fileSize > maxUploadBytes[type]) {
+    throw new Error(
+      type === "photo"
+        ? "Фото слишком большое. Максимум 10 MB."
+        : "Аудиофайл слишком большой. Максимум 20 MB.",
+    );
+  }
+}
+
 function getExtension(mimeType: string) {
   const mimeMap: Record<string, string> = {
     "image/jpeg": ".jpg",
@@ -53,10 +74,7 @@ export function detectMimeTypeForUpload(bytes: Uint8Array, type: MediaAssetType)
       return "image/gif";
     }
 
-    if (
-      matchesAscii(bytes, "RIFF") &&
-      matchesAscii(bytes, "WEBP", 8)
-    ) {
+    if (matchesAscii(bytes, "RIFF") && matchesAscii(bytes, "WEBP", 8)) {
       return "image/webp";
     }
   }
@@ -97,25 +115,13 @@ export function validateUpload(params: {
 }) {
   const { fileSize, type, detectedMimeType } = params;
 
-  if (!fileSize) {
-    throw new Error("Файл пустой.");
-  }
+  assertUploadSizeWithinLimit(fileSize, type);
 
   if (!allowedMimeTypes[type].includes(detectedMimeType)) {
     throw new Error(
       type === "photo"
         ? "Разрешены только изображения JPG, PNG, WebP или GIF."
         : "Разрешены только аудиофайлы MP3, WAV, OGG, WebM или M4A.",
-    );
-  }
-
-  const maxSizeInBytes = type === "photo" ? 10 * 1024 * 1024 : 20 * 1024 * 1024;
-
-  if (fileSize > maxSizeInBytes) {
-    throw new Error(
-      type === "photo"
-        ? "Фото слишком большое. Максимум 10 MB."
-        : "Аудиофайл слишком большой. Максимум 20 MB.",
     );
   }
 }
@@ -127,6 +133,11 @@ export async function saveUpload(params: {
   file: File;
 }) {
   const { familySlug, personId, type, file } = params;
+
+  // Validate the destination path and size BEFORE loading the file into memory.
+  const uploadDir = resolveUploadDir(familySlug, personId, type);
+  assertUploadSizeWithinLimit(file.size, type);
+
   const arrayBuffer = await file.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
   const detectedMimeType = detectMimeTypeForUpload(bytes, type);
@@ -136,15 +147,6 @@ export async function saveUpload(params: {
     type,
     detectedMimeType,
   });
-
-  const uploadDir = path.join(
-    process.cwd(),
-    "storage",
-    "uploads",
-    familySlug,
-    personId,
-    type,
-  );
 
   await mkdir(uploadDir, { recursive: true });
 
@@ -162,6 +164,34 @@ export async function saveUpload(params: {
     mimeType: detectedMimeType,
     title: path.basename(file.name || `${type}-${Date.now()}`),
   };
+}
+
+// Only allow safe characters in path segments so a crafted slug/personId (e.g.
+// "..") can never escape the uploads directory.
+const SAFE_SEGMENT = /^[A-Za-z0-9А-Яа-яЁё_-]+$/;
+
+function assertSafeSegment(segment: string, label: string) {
+  if (!segment || !SAFE_SEGMENT.test(segment)) {
+    throw new Error(`Недопустимое значение "${label}" для пути хранения.`);
+  }
+
+  return segment;
+}
+
+function resolveUploadDir(familySlug: string, personId: string, type: MediaAssetType) {
+  assertSafeSegment(familySlug, "familySlug");
+  assertSafeSegment(personId, "personId");
+  assertSafeSegment(type, "type");
+
+  const uploadsRoot = path.join(process.cwd(), "storage", "uploads");
+  const uploadDir = path.resolve(uploadsRoot, familySlug, personId, type);
+
+  // Belt-and-suspenders: ensure the resolved directory stays inside the root.
+  if (uploadDir !== uploadsRoot && !uploadDir.startsWith(uploadsRoot + path.sep)) {
+    throw new Error("Неверный путь к каталогу загрузок.");
+  }
+
+  return uploadDir;
 }
 
 function resolvePrivateStoragePath(storagePath: string) {

@@ -2,13 +2,19 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
-  type WheelEvent,
 } from "react";
-import { getFocusRelatives, getPersonFullName } from "@/lib/family-utils";
+import {
+  buildFamilyTreeLayout,
+  getFocusRelatives,
+  getPersonFullName,
+  getRelationLabel,
+} from "@/lib/family-utils";
 import Link from "next/link";
 import { Family, FamilyPerson, MediaAsset } from "@/lib/types";
 
@@ -32,49 +38,30 @@ type FamilyWorkspaceProps = {
   feedbackMessage?: string;
 };
 
-type TreeNodeVariant = "focus" | "medium" | "small";
-
 type TreeNodeProps = {
   person: FamilyPerson;
   role: string;
-  variant: TreeNodeVariant;
-  onClick?: (personId: string) => void;
+  isFocus: boolean;
+  size: number;
 };
 
 type IconProps = {
   className?: string;
 };
 
-type DragOrigin = {
+type PointerState = {
   pointerId: number;
   startX: number;
   startY: number;
   originX: number;
   originY: number;
+  personId: string | null;
+  moved: boolean;
 };
 
-type DiagramNode = {
-  person: FamilyPerson;
-  role: string;
-  variant: TreeNodeVariant;
-  x: number;
-  y: number;
-};
+const DRAG_THRESHOLD = 6;
 
-const DIAGRAM_WIDTH = 860;
-const DIAGRAM_HEIGHT = 760;
-const FOCUS_CENTER = { x: 286, y: 404 };
-const SPOUSE_CENTER = { x: 556, y: 432 };
-const PARENT_CENTERS = [
-  { x: 220, y: 122 },
-  { x: 540, y: 122 },
-];
-const SIBLING_POSITIONS = [
-  { x: 716, y: 348 },
-  { x: 716, y: 546 },
-];
-const MIN_SCALE = 0.72;
-const MAX_SCALE = 1.48;
+const FOCUS_ACCENT = "#b6532f";
 
 function TreeGlyph({ className }: IconProps) {
   return (
@@ -181,95 +168,34 @@ function ExpandGlyph({ className }: IconProps) {
   );
 }
 
-function getRoleLabel(group: "parent" | "spouse" | "child" | "sibling", person: FamilyPerson) {
-  if (group === "parent") {
-    return person.gender === "male" ? "Отец" : "Мать";
-  }
-
-  if (group === "spouse") {
-    return person.gender === "male" ? "Супруг" : "Жена";
-  }
-
-  if (group === "child") {
-    return person.gender === "male" ? "Сын" : "Дочь";
-  }
-
-  return person.gender === "male" ? "Брат" : "Сестра";
-}
-
 function getAccent(index: number) {
   return ["emerald", "amber", "sky", "rose", "violet"][index % 5];
-}
-
-function getFocusSummary(person: FamilyPerson) {
-  return `${person.birthDate}, ${person.birthPlace}. ${person.biography}`;
-}
-
-function getNodeSize(variant: TreeNodeVariant) {
-  if (variant === "focus") {
-    return 312;
-  }
-
-  if (variant === "medium") {
-    return 222;
-  }
-
-  return 188;
-}
-
-function getChildCenters(count: number) {
-  const startX = 428 - ((count - 1) * 168) / 2;
-  return Array.from({ length: count }, (_, index) => ({
-    x: startX + index * 168,
-    y: 646,
-  }));
-}
-
-function getSiblingCenters(count: number) {
-  if (count <= SIBLING_POSITIONS.length) {
-    return SIBLING_POSITIONS.slice(0, count);
-  }
-
-  const startY = 314;
-  return Array.from({ length: count }, (_, index) => ({
-    x: 716,
-    y: startY + index * 146,
-  }));
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function getNodeFrame(node: DiagramNode) {
-  const size = getNodeSize(node.variant);
-
-  return {
-    size,
-    left: node.x - size / 2,
-    top: node.y - size / 2,
-  };
-}
-
-function TreeNode({ person, role, variant, onClick }: TreeNodeProps) {
-  const isInteractive = Boolean(onClick);
-
+function TreeNode({ person, role, isFocus, size }: TreeNodeProps) {
   return (
     <button
-      className={`gene-node ${variant}${isInteractive ? " interactive" : ""}`}
-      onClick={() => onClick?.(person.id)}
+      className={`gene-node small interactive${isFocus ? " is-focus" : ""}`}
+      data-person-id={person.id}
+      style={{
+        width: size,
+        height: size,
+        ...(isFocus
+          ? { outline: `3px solid ${FOCUS_ACCENT}`, outlineOffset: "2px" }
+          : {}),
+      }}
       type="button"
     >
       <div className="gene-node-badge">
-        {variant === "focus" ? (
-          <TreeGlyph className="node-icon" />
-        ) : (
-          <PersonGlyph className="node-icon" />
-        )}
+        {isFocus ? <TreeGlyph className="node-icon" /> : <PersonGlyph className="node-icon" />}
       </div>
       <div className="gene-node-copy">
         <strong>{getPersonFullName(person)}</strong>
-        {variant === "focus" ? <p>{getFocusSummary(person)}</p> : <span>{role}</span>}
+        <span>{role}</span>
       </div>
     </button>
   );
@@ -296,43 +222,63 @@ export function FamilyWorkspace({
 }: FamilyWorkspaceProps) {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [expandedChildren, setExpandedChildren] = useState(false);
-  const [expandedSiblings, setExpandedSiblings] = useState(false);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
-  const dragOriginRef = useRef<DragOrigin | null>(null);
+  const pointerStateRef = useRef<PointerState | null>(null);
   const panSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const focusPerson = family.people.find((person) => person.id === focusPersonId) ?? family.people[0];
-  const relatives = getFocusRelatives(family, focusPerson.id);
-  const [leftParent, rightParent] = relatives.parents.slice(0, 2);
-  const primarySpouse = relatives.spouses[0];
-  const siblingNodes = expandedSiblings ? relatives.siblings : relatives.siblings.slice(0, 2);
-  const childNodes = expandedChildren ? relatives.children : relatives.children.slice(0, 3);
-  const hiddenSiblingCount = Math.max(relatives.siblings.length - siblingNodes.length, 0);
-  const hiddenChildCount = Math.max(relatives.children.length - childNodes.length, 0);
+  const centeredFocusRef = useRef<string | null>(null);
+  const focusPerson =
+    family.people.find((person) => person.id === focusPersonId) ?? family.people[0];
+  const relatives = focusPerson
+    ? getFocusRelatives(family, focusPerson.id)
+    : { parents: [], spouses: [], siblings: [], children: [] };
   const relativeBadges = [
-    ...relatives.parents.map((person) => ({
-      role: getRoleLabel("parent", person),
-      person,
-    })),
-    ...relatives.spouses.map((person) => ({
-      role: getRoleLabel("spouse", person),
-      person,
-    })),
-    ...relatives.children.map((person) => ({
-      role: getRoleLabel("child", person),
-      person,
-    })),
-    ...relatives.siblings.map((person) => ({
-      role: getRoleLabel("sibling", person),
-      person,
-    })),
+    ...relatives.parents.map((person) => ({ role: getRelationLabel("parent", person), person })),
+    ...relatives.spouses.map((person) => ({ role: getRelationLabel("spouse", person), person })),
+    ...relatives.children.map((person) => ({ role: getRelationLabel("child", person), person })),
+    ...relatives.siblings.map((person) => ({ role: getRelationLabel("sibling", person), person })),
   ];
 
+  const layout = useMemo(
+    () => buildFamilyTreeLayout(family, focusPerson?.id ?? ""),
+    [family, focusPerson?.id],
+  );
+
+  const diagramWidth = Math.max(layout.width, 1);
+  const diagramHeight = Math.max(layout.height, 1);
+
+  function centerOnFocus(scale: number) {
+    if (!surfaceSize.width || !surfaceSize.height) {
+      return;
+    }
+
+    const focusNode = layout.nodes.find((node) => node.isFocus) ?? layout.nodes[0];
+
+    if (!focusNode) {
+      setPanOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    setPanOffset({
+      x: surfaceSize.width / 2 - focusNode.x * scale,
+      y: surfaceSize.height / 2 - focusNode.y * scale,
+    });
+  }
+
   useEffect(() => {
-    setExpandedChildren(false);
-    setExpandedSiblings(false);
-    setPanOffset({ x: 0, y: 0 });
-  }, [focusPersonId]);
+    if (!surfaceSize.width || !surfaceSize.height) {
+      return;
+    }
+
+    // Center once per focus person. Never re-center on unrelated re-renders,
+    // otherwise dragging / minimap navigation would be snapped back.
+    if (centeredFocusRef.current === focusPerson?.id) {
+      return;
+    }
+
+    centeredFocusRef.current = focusPerson?.id ?? null;
+    centerOnFocus(canvasScale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPerson?.id, surfaceSize.width, surfaceSize.height]);
 
   useEffect(() => {
     const element = panSurfaceRef.current;
@@ -367,264 +313,146 @@ export function FamilyWorkspace({
     return () => observer.disconnect();
   }, []);
 
-  const parentDiagramNodes: DiagramNode[] = [leftParent, rightParent]
-    .filter((person): person is FamilyPerson => Boolean(person))
-    .map((person, index) => ({
-      person,
-      role: getRoleLabel("parent", person),
-      variant: "medium",
-      x: PARENT_CENTERS[index]?.x ?? PARENT_CENTERS[0].x,
-      y: PARENT_CENTERS[index]?.y ?? PARENT_CENTERS[0].y,
-    }));
-
-  const focusDiagramNode: DiagramNode = {
-    person: focusPerson,
-    role: "Центр дерева",
-    variant: "focus",
-    x: FOCUS_CENTER.x,
-    y: FOCUS_CENTER.y,
-  };
-
-  const spouseDiagramNode: DiagramNode | null = primarySpouse
-    ? {
-        person: primarySpouse,
-        role: getRoleLabel("spouse", primarySpouse),
-        variant: "small",
-        x: SPOUSE_CENTER.x,
-        y: SPOUSE_CENTER.y,
-      }
-    : null;
-
-  const childDiagramNodes: DiagramNode[] = childNodes.map((person, index) => {
-    const center = getChildCenters(childNodes.length)[index];
-
-    return {
-      person,
-      role: getRoleLabel("child", person),
-      variant: "small",
-      x: center.x,
-      y: center.y,
-    };
-  });
-
-  const siblingDiagramNodes: DiagramNode[] = siblingNodes.map((person, index) => {
-    const center = getSiblingCenters(siblingNodes.length)[index];
-
-    return {
-      person,
-      role: getRoleLabel("sibling", person),
-      variant: "small",
-      x: center.x,
-      y: center.y,
-    };
-  });
-
-  const treePaths: ReactNode[] = [];
-
-  if (parentDiagramNodes.length === 2) {
-    const [parentLeft, parentRight] = parentDiagramNodes;
-    const parentRadius = getNodeSize("medium") / 2;
-    const unionX = (parentLeft.x + parentRight.x) / 2;
-    const relationY = parentLeft.y;
-    const generationY = 236;
-    const sameGenerationNodes = [focusDiagramNode, ...siblingDiagramNodes];
-    const relationMinX = Math.min(...sameGenerationNodes.map((node) => node.x));
-    const relationMaxX = Math.max(...sameGenerationNodes.map((node) => node.x));
-
-    treePaths.push(
-      <path
-        d={`M ${parentLeft.x + parentRadius - 12} ${relationY} H ${parentRight.x - parentRadius + 12}`}
-        key="parents-link"
-      />,
-    );
-    treePaths.push(<path d={`M ${unionX} ${relationY} V ${generationY}`} key="parents-drop" />);
-
-    treePaths.push(
-      <path d={`M ${relationMinX} ${generationY} H ${relationMaxX}`} key="generation-line" />,
-    );
-
-    sameGenerationNodes.forEach((node) => {
-      const radius = getNodeSize(node.variant) / 2;
-      treePaths.push(
-        <path
-          d={`M ${node.x} ${generationY} V ${node.y - radius + 8}`}
-          key={`generation-branch-${node.person.id}`}
-        />,
-      );
-    });
-  } else if (parentDiagramNodes.length === 1) {
-    const [parentOnly] = parentDiagramNodes;
-    const parentRadius = getNodeSize("medium") / 2;
-
-    treePaths.push(
-      <path
-        d={`M ${parentOnly.x} ${parentOnly.y + parentRadius - 10} V ${focusDiagramNode.y - getNodeSize("focus") / 2 + 10}`}
-        key="single-parent-drop"
-      />,
-    );
-  }
-
-  if (spouseDiagramNode) {
-    const focusRadius = getNodeSize("focus") / 2;
-    const spouseRadius = getNodeSize("small") / 2;
-
-    treePaths.push(
-      <path
-        d={`M ${focusDiagramNode.x + focusRadius - 10} ${spouseDiagramNode.y} H ${spouseDiagramNode.x - spouseRadius + 10}`}
-        key="spouse-link"
-      />,
-    );
-  }
-
-  if (childDiagramNodes.length) {
-    const originX = spouseDiagramNode
-      ? (focusDiagramNode.x + spouseDiagramNode.x) / 2
-      : focusDiagramNode.x;
-    const originY = spouseDiagramNode
-      ? spouseDiagramNode.y
-      : focusDiagramNode.y + getNodeSize("focus") / 2 - 16;
-    const hubY = 552;
-    const minChildX = Math.min(...childDiagramNodes.map((node) => node.x));
-    const maxChildX = Math.max(...childDiagramNodes.map((node) => node.x));
-
-    treePaths.push(<path d={`M ${originX} ${originY} V ${hubY}`} key="children-drop" />);
-
-    if (childDiagramNodes.length > 1) {
-      treePaths.push(<path d={`M ${minChildX} ${hubY} H ${maxChildX}`} key="children-line" />);
-    }
-
-    childDiagramNodes.forEach((node) => {
-      const radius = getNodeSize("small") / 2;
-      treePaths.push(
-        <path d={`M ${node.x} ${hubY} V ${node.y - radius + 8}`} key={`child-branch-${node.person.id}`} />,
-      );
-    });
-  }
-
   const minimapWidth = 176;
-  const minimapHeight = Math.round((DIAGRAM_HEIGHT / DIAGRAM_WIDTH) * minimapWidth);
-  const viewportX = clamp(-panOffset.x / canvasScale, 0, DIAGRAM_WIDTH);
-  const viewportY = clamp(-panOffset.y / canvasScale, 0, DIAGRAM_HEIGHT);
+  const minimapHeight = Math.max(
+    Math.round((diagramHeight / diagramWidth) * minimapWidth),
+    1,
+  );
+  const viewportX = clamp(-panOffset.x / canvasScale, 0, diagramWidth);
+  const viewportY = clamp(-panOffset.y / canvasScale, 0, diagramHeight);
   const viewportWidth = clamp(
-    surfaceSize.width ? surfaceSize.width / canvasScale : DIAGRAM_WIDTH * 0.38,
-    140,
-    DIAGRAM_WIDTH,
+    surfaceSize.width ? surfaceSize.width / canvasScale : diagramWidth * 0.38,
+    100,
+    diagramWidth,
   );
   const viewportHeight = clamp(
-    surfaceSize.height ? surfaceSize.height / canvasScale : DIAGRAM_HEIGHT * 0.42,
-    120,
-    DIAGRAM_HEIGHT,
+    surfaceSize.height ? surfaceSize.height / canvasScale : diagramHeight * 0.42,
+    80,
+    diagramHeight,
   );
 
   const minimapViewport = {
-    x: (viewportX / DIAGRAM_WIDTH) * minimapWidth,
-    y: (viewportY / DIAGRAM_HEIGHT) * minimapHeight,
-    width: (viewportWidth / DIAGRAM_WIDTH) * minimapWidth,
-    height: (viewportHeight / DIAGRAM_HEIGHT) * minimapHeight,
+    x: (viewportX / diagramWidth) * minimapWidth,
+    y: (viewportY / diagramHeight) * minimapHeight,
+    width: (viewportWidth / diagramWidth) * minimapWidth,
+    height: (viewportHeight / diagramHeight) * minimapHeight,
   };
-
-  const minimapNodes = [
-    ...parentDiagramNodes,
-    focusDiagramNode,
-    ...siblingDiagramNodes,
-    ...childDiagramNodes,
-    ...(spouseDiagramNode ? [spouseDiagramNode] : []),
-  ];
 
   function handleCanvasPointerDown(event: PointerEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
 
-    if (target.closest("button, a, input, textarea, select, audio")) {
+    // Let genuine controls (links, form fields, audio, the minimap) work as-is.
+    // The tree nodes are handled here so a drag can start anywhere on the canvas.
+    if (target.closest("a, input, textarea, select, audio, .tree-minimap")) {
       return;
     }
 
-    dragOriginRef.current = {
+    const nodeElement = target.closest("[data-person-id]") as HTMLElement | null;
+
+    pointerStateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       originX: panOffset.x,
       originY: panOffset.y,
+      personId: nodeElement?.dataset.personId ?? null,
+      moved: false,
     };
-    setIsDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function handleCanvasPointerMove(event: PointerEvent<HTMLDivElement>) {
-    const dragOrigin = dragOriginRef.current;
+    const state = pointerStateRef.current;
 
-    if (!dragOrigin || dragOrigin.pointerId !== event.pointerId) {
+    if (!state || state.pointerId !== event.pointerId) {
       return;
     }
 
-    const deltaX = event.clientX - dragOrigin.startX;
-    const deltaY = event.clientY - dragOrigin.startY;
+    const deltaX = event.clientX - state.startX;
+    const deltaY = event.clientY - state.startY;
 
-    setPanOffset({
-      x: dragOrigin.originX + deltaX,
-      y: dragOrigin.originY + deltaY,
-    });
+    if (!state.moved && Math.hypot(deltaX, deltaY) > DRAG_THRESHOLD) {
+      state.moved = true;
+      setIsDragging(true);
+    }
+
+    if (state.moved) {
+      setPanOffset({ x: state.originX + deltaX, y: state.originY + deltaY });
+    }
   }
 
-  function stopDragging(event: PointerEvent<HTMLDivElement>) {
-    const dragOrigin = dragOriginRef.current;
+  function releasePointer(event: PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
 
-    if (!dragOrigin || dragOrigin.pointerId !== event.pointerId) {
+  function handleCanvasPointerUp(event: PointerEvent<HTMLDivElement>) {
+    const state = pointerStateRef.current;
+
+    if (!state || state.pointerId !== event.pointerId) {
       return;
     }
 
-    dragOriginRef.current = null;
+    pointerStateRef.current = null;
     setIsDragging(false);
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    releasePointer(event);
+
+    // A tap (no meaningful movement) on a node selects that person.
+    if (!state.moved && state.personId) {
+      onFocusPerson?.(state.personId);
+    }
+  }
+
+  function handleCanvasPointerCancel(event: PointerEvent<HTMLDivElement>) {
+    const state = pointerStateRef.current;
+
+    if (!state || state.pointerId !== event.pointerId) {
+      return;
+    }
+
+    pointerStateRef.current = null;
+    setIsDragging(false);
+    releasePointer(event);
   }
 
   function handleResetView() {
-    setPanOffset({ x: 0, y: 0 });
     onResetZoom?.();
+    centerOnFocus(1);
   }
 
-  function handleCanvasWheel(event: WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-
-    const surface = panSurfaceRef.current;
-
-    if (!surface) {
-      return;
-    }
-
-    const rect = surface.getBoundingClientRect();
-    const cursorX = event.clientX - rect.left;
-    const cursorY = event.clientY - rect.top;
-    const nextScale = clamp(
-      Number((canvasScale + (event.deltaY < 0 ? 0.08 : -0.08)).toFixed(2)),
-      MIN_SCALE,
-      MAX_SCALE,
-    );
-
-    if (nextScale === canvasScale) {
-      return;
-    }
-
-    const sceneX = (cursorX - panOffset.x) / canvasScale;
-    const sceneY = (cursorY - panOffset.y) / canvasScale;
-
-    setPanOffset({
-      x: cursorX - sceneX * nextScale,
-      y: cursorY - sceneY * nextScale,
-    });
-    onScaleChange?.(nextScale);
-  }
-
-  function handleMinimapNavigate(event: PointerEvent<HTMLButtonElement>) {
+  function handleMinimapNavigate(event: MouseEvent<HTMLButtonElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratioX = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const ratioY = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    const targetSceneX = ratioX * DIAGRAM_WIDTH;
-    const targetSceneY = ratioY * DIAGRAM_HEIGHT;
+    const targetSceneX = ratioX * diagramWidth;
+    const targetSceneY = ratioY * diagramHeight;
 
     setPanOffset({
       x: -(targetSceneX * canvasScale - surfaceSize.width / 2),
       y: -(targetSceneY * canvasScale - surfaceSize.height / 2),
     });
+  }
+
+  if (!focusPerson) {
+    return (
+      <section className="workspace-layout tree-mode">
+        <div className="tree-board" style={{ padding: "48px 32px" }}>
+          <div className="archive-empty">
+            <div className="eyebrow">Пустое дерево</div>
+            <h2>В этой семье пока нет людей</h2>
+            <p>Добавьте первого человека — с него начнётся ваше семейное дерево.</p>
+            {canEdit ? (
+              <button className="primary-button" onClick={onOpenAddPerson} type="button">
+                Добавить первого человека
+              </button>
+            ) : (
+              <div className="note-box">Режим просмотра. Пока в дереве нет людей.</div>
+            )}
+          </div>
+        </div>
+      </section>
+    );
   }
 
   return (
@@ -673,7 +501,7 @@ export function FamilyWorkspace({
                 <ZoomInGlyph className="tree-control-icon" />
               </button>
               <button
-                aria-label="Сбросить масштаб и позицию"
+                aria-label="Показать всё дерево и центрировать"
                 className="tree-control-button"
                 onClick={handleResetView}
                 type="button"
@@ -691,175 +519,74 @@ export function FamilyWorkspace({
 
             <div
               className={`tree-pan-surface${isDragging ? " dragging" : ""}`}
-              onWheel={handleCanvasWheel}
-              onPointerCancel={stopDragging}
+              onPointerCancel={handleCanvasPointerCancel}
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
-              onPointerUp={stopDragging}
+              onPointerUp={handleCanvasPointerUp}
               ref={panSurfaceRef}
             >
               <div
                 className="tree-canvas-scene"
                 style={{
                   transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${canvasScale})`,
+                  transition: isDragging ? "none" : undefined,
                 }}
               >
-                <div className="tree-diagram">
+                <div
+                  className="tree-diagram"
+                  style={{ width: diagramWidth, height: diagramHeight, position: "relative" }}
+                >
                   <svg
                     aria-hidden="true"
                     className="tree-links-svg"
                     preserveAspectRatio="xMinYMin meet"
-                    viewBox={`0 0 ${DIAGRAM_WIDTH} ${DIAGRAM_HEIGHT}`}
+                    viewBox={`0 0 ${diagramWidth} ${diagramHeight}`}
                   >
-                    {treePaths}
+                    {layout.links.map((link) => (
+                      <path d={link.d} key={link.key} />
+                    ))}
                   </svg>
 
-                  {parentDiagramNodes.map((node) => {
-                    const frame = getNodeFrame(node);
-
-                    return (
-                      <div
-                        className="tree-node-anchor"
-                        key={node.person.id}
-                        style={{ left: frame.left, top: frame.top }}
-                      >
-                        <TreeNode
-                          onClick={onFocusPerson}
-                          person={node.person}
-                          role={node.role}
-                          variant={node.variant}
-                        />
-                      </div>
-                    );
-                  })}
-
-                  <div
-                    className="tree-node-anchor"
-                    style={{
-                      left: getNodeFrame(focusDiagramNode).left,
-                      top: getNodeFrame(focusDiagramNode).top,
-                    }}
-                  >
-                    <TreeNode person={focusPerson} role="Центр дерева" variant="focus" />
-                  </div>
-
-                  {spouseDiagramNode ? (
+                  {layout.nodes.map((node) => (
                     <div
                       className="tree-node-anchor"
+                      key={node.person.id}
                       style={{
-                        left: getNodeFrame(spouseDiagramNode).left,
-                        top: getNodeFrame(spouseDiagramNode).top,
+                        left: node.x - layout.nodeSize / 2,
+                        top: node.y - layout.nodeSize / 2,
                       }}
                     >
                       <TreeNode
-                        onClick={onFocusPerson}
-                        person={spouseDiagramNode.person}
-                        role={spouseDiagramNode.role}
-                        variant={spouseDiagramNode.variant}
+                        isFocus={node.isFocus}
+                        person={node.person}
+                        role={node.role}
+                        size={layout.nodeSize}
                       />
                     </div>
-                  ) : null}
-
-                  {siblingDiagramNodes.map((node) => {
-                    const frame = getNodeFrame(node);
-
-                    return (
-                      <div
-                        className="tree-node-anchor"
-                        key={node.person.id}
-                        style={{ left: frame.left, top: frame.top }}
-                      >
-                        <TreeNode
-                          onClick={onFocusPerson}
-                          person={node.person}
-                          role={node.role}
-                          variant={node.variant}
-                        />
-                      </div>
-                    );
-                  })}
-
-                  {childDiagramNodes.map((node) => {
-                    const frame = getNodeFrame(node);
-
-                    return (
-                      <div
-                        className="tree-node-anchor"
-                        key={node.person.id}
-                        style={{ left: frame.left, top: frame.top }}
-                      >
-                        <TreeNode
-                          onClick={onFocusPerson}
-                          person={node.person}
-                          role={node.role}
-                          variant={node.variant}
-                        />
-                      </div>
-                    );
-                  })}
-
-                  {hiddenSiblingCount ? (
-                    <button
-                      className="tree-branch-toggle siblings"
-                      onClick={() => setExpandedSiblings(true)}
-                      type="button"
-                    >
-                      +{hiddenSiblingCount} еще родственник{hiddenSiblingCount > 1 ? "а" : ""}
-                    </button>
-                  ) : null}
-
-                  {expandedSiblings && relatives.siblings.length > 2 ? (
-                    <button
-                      className="tree-branch-toggle siblings collapse"
-                      onClick={() => setExpandedSiblings(false)}
-                      type="button"
-                    >
-                      Свернуть боковую ветку
-                    </button>
-                  ) : null}
-
-                  {hiddenChildCount ? (
-                    <button
-                      className="tree-branch-toggle children"
-                      onClick={() => setExpandedChildren(true)}
-                      type="button"
-                    >
-                      +{hiddenChildCount} еще детей
-                    </button>
-                  ) : null}
-
-                  {expandedChildren && relatives.children.length > 3 ? (
-                    <button
-                      className="tree-branch-toggle children collapse"
-                      onClick={() => setExpandedChildren(false)}
-                      type="button"
-                    >
-                      Свернуть линию детей
-                    </button>
-                  ) : null}
+                  ))}
                 </div>
               </div>
 
               <div className="tree-hint">
-                Перетаскивай холст мышью, крути колесо для zoom и нажимай на узлы для перехода.
+                Перетаскивай холст мышью, крути колесо для zoom и нажимай на узлы, чтобы центрировать человека.
               </div>
 
               <div className="tree-minimap">
                 <div className="tree-minimap-title">Миникарта</div>
-                <button className="tree-minimap-body" onPointerDown={handleMinimapNavigate} type="button">
+                <button className="tree-minimap-body" onClick={handleMinimapNavigate} type="button">
                   <svg
                     aria-hidden="true"
                     className="tree-minimap-svg"
                     preserveAspectRatio="xMidYMid meet"
                     viewBox={`0 0 ${minimapWidth} ${minimapHeight}`}
                   >
-                    {minimapNodes.map((node) => (
+                    {layout.nodes.map((node) => (
                       <circle
-                        cx={(node.x / DIAGRAM_WIDTH) * minimapWidth}
-                        cy={(node.y / DIAGRAM_HEIGHT) * minimapHeight}
-                        fill={node.variant === "focus" ? "rgba(182, 83, 47, 0.9)" : "rgba(198, 152, 95, 0.72)"}
+                        cx={(node.x / diagramWidth) * minimapWidth}
+                        cy={(node.y / diagramHeight) * minimapHeight}
+                        fill={node.isFocus ? "rgba(182, 83, 47, 0.9)" : "rgba(198, 152, 95, 0.72)"}
                         key={`minimap-${node.person.id}`}
-                        r={node.variant === "focus" ? 7 : 5}
+                        r={node.isFocus ? 7 : 5}
                       />
                     ))}
                     <rect

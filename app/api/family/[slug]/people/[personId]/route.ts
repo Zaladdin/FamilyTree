@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireFamilyRole } from "@/lib/auth";
 import { HttpError } from "@/lib/http-error";
 import { updatePersonInFamily } from "@/lib/family-repository";
-import { parseUpdatePersonInput } from "@/lib/request-validation";
+import { assertSameOrigin, parseUpdatePersonInput } from "@/lib/request-validation";
 
 type RouteContext = {
   params: Promise<{ slug: string; personId: string }>;
@@ -12,6 +12,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { slug, personId } = await context.params;
 
   try {
+    assertSameOrigin(request);
     const access = await requireFamilyRole(slug, ["owner", "admin", "editor"]);
     const payload = parseUpdatePersonInput(await request.json());
     const person = await updatePersonInFamily(

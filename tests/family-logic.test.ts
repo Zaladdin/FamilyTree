@@ -52,6 +52,7 @@ test("addPersonToFamily rejects sibling creation when selected person has no kno
     timeline: [],
     media: { photos: 0, audio: 0, documents: 0 },
     mediaAssets: [],
+    stories: [],
   });
 
   assert.throws(
@@ -85,6 +86,7 @@ test("findDuplicatePerson also checks archived people", () => {
     timeline: [],
     media: { photos: 0, audio: 0, documents: 0 },
     mediaAssets: [],
+    stories: [],
   });
 
   const duplicate = findDuplicatePerson(family, {

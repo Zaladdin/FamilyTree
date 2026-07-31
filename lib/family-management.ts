@@ -1,14 +1,8 @@
 import { HttpError } from "@/lib/http-error";
+import { slugify } from "@/lib/slug";
 
 function normalizeText(value: string) {
   return value.trim().replace(/\s+/g, " ");
-}
-
-function slugify(value: string) {
-  return normalizeText(value)
-    .toLowerCase()
-    .replace(/[^a-zа-я0-9]+/gi, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 export type CreateFamilyInput = {

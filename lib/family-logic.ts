@@ -1,4 +1,5 @@
 import { Family, FamilyPerson, FamilyRelationship, Gender } from "@/lib/types";
+import { slugify } from "@/lib/slug";
 
 export type AddRelationshipKind = "parent" | "child" | "spouse" | "sibling";
 
@@ -31,20 +32,13 @@ export function normalizeText(value: string) {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function makeSlugPiece(value: string) {
-  return normalizeText(value)
-    .toLowerCase()
-    .replace(/[^a-zа-я0-9]+/gi, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function personDisplayNameForTimeline(person: AddPersonInput) {
   return [person.firstName, person.lastName].filter(Boolean).join(" ");
 }
 
 function makePersonId(family: Family, person: AddPersonInput) {
   const base = [person.firstName, person.lastName, person.birthDate]
-    .map(makeSlugPiece)
+    .map(slugify)
     .filter(Boolean)
     .join("-");
 
@@ -55,7 +49,7 @@ function makePersonId(family: Family, person: AddPersonInput) {
   let counter = 2;
 
   while (taken.has(candidate)) {
-    candidate = `${base}-${counter}`;
+    candidate = `${base || "person"}-${counter}`;
     counter += 1;
   }
 
@@ -155,11 +149,13 @@ export function addPersonToFamily(
     );
   }
 
-  const relativePerson = family.people.find(
-    (person) => person.id === input.relativePersonId,
-  );
+  // The very first person in an empty family is added standalone (no relative).
+  const isFirstPerson = family.people.length === 0;
+  const relativePerson = isFirstPerson
+    ? undefined
+    : family.people.find((person) => person.id === input.relativePersonId);
 
-  if (!relativePerson) {
+  if (!isFirstPerson && !relativePerson) {
     throw new Error("Не удалось найти выбранного родственника для связи.");
   }
 
@@ -189,7 +185,7 @@ export function addPersonToFamily(
     note: "Карточка создана в MVP через форму добавления человека.",
     timeline: [
       `${normalizedInput.birthDate} - рождение`,
-      `2026 - добавлен(а) в цифровое дерево семьи`,
+      `${new Date().getFullYear()} - добавлен(а) в цифровое дерево семьи`,
     ],
     media: { photos: 0, audio: 0, documents: 0 },
     mediaAssets: [],
@@ -198,58 +194,66 @@ export function addPersonToFamily(
 
   let nextRelationships = [...family.relationships];
 
-  if (normalizedInput.relationshipKind === "spouse") {
-    nextRelationships = ensureRelationship(nextRelationships, {
-      type: "spouse",
-      fromPersonId: relativePerson.id,
-      toPersonId: nextPerson.id,
-    });
-  }
-
-  if (normalizedInput.relationshipKind === "child") {
-    nextRelationships = ensureRelationship(nextRelationships, {
-      type: "parent",
-      fromPersonId: relativePerson.id,
-      toPersonId: nextPerson.id,
-    });
-
-    const spouses = getSpouses(family, relativePerson.id);
-
-    if (spouses.length === 1) {
+  if (relativePerson) {
+    if (normalizedInput.relationshipKind === "spouse") {
       nextRelationships = ensureRelationship(nextRelationships, {
-        type: "parent",
-        fromPersonId: spouses[0],
+        type: "spouse",
+        fromPersonId: relativePerson.id,
         toPersonId: nextPerson.id,
       });
     }
-  }
 
-  if (normalizedInput.relationshipKind === "parent") {
-    nextRelationships = ensureRelationship(nextRelationships, {
-      type: "parent",
-      fromPersonId: nextPerson.id,
-      toPersonId: relativePerson.id,
-    });
-  }
+    if (normalizedInput.relationshipKind === "child") {
+      nextRelationships = ensureRelationship(nextRelationships, {
+        type: "parent",
+        fromPersonId: relativePerson.id,
+        toPersonId: nextPerson.id,
+      });
 
-  if (normalizedInput.relationshipKind === "sibling") {
-    const parents = getParents(family, relativePerson.id);
+      const spouses = getSpouses(family, relativePerson.id);
 
-    if (!parents.length) {
-      throw new Error(
-        "Нельзя добавить брата или сестру без известных родителей выбранного человека. Сначала укажите родителя.",
-      );
+      if (spouses.length === 1) {
+        nextRelationships = ensureRelationship(nextRelationships, {
+          type: "parent",
+          fromPersonId: spouses[0],
+          toPersonId: nextPerson.id,
+        });
+      }
     }
 
-    nextRelationships = parents.reduce(
-      (relationships, parentId) =>
-        ensureRelationship(relationships, {
-          type: "parent",
-          fromPersonId: parentId,
-          toPersonId: nextPerson.id,
-        }),
-      nextRelationships,
-    );
+    if (normalizedInput.relationshipKind === "parent") {
+      if (getParents(family, relativePerson.id).length >= 2) {
+        throw new Error(
+          "У выбранного человека уже указаны двое родителей. Сначала измените существующие связи.",
+        );
+      }
+
+      nextRelationships = ensureRelationship(nextRelationships, {
+        type: "parent",
+        fromPersonId: nextPerson.id,
+        toPersonId: relativePerson.id,
+      });
+    }
+
+    if (normalizedInput.relationshipKind === "sibling") {
+      const parents = getParents(family, relativePerson.id);
+
+      if (!parents.length) {
+        throw new Error(
+          "Нельзя добавить брата или сестру без известных родителей выбранного человека. Сначала укажите родителя.",
+        );
+      }
+
+      nextRelationships = parents.reduce(
+        (relationships, parentId) =>
+          ensureRelationship(relationships, {
+            type: "parent",
+            fromPersonId: parentId,
+            toPersonId: nextPerson.id,
+          }),
+        nextRelationships,
+      );
+    }
   }
 
   const nextFamily: Family = {

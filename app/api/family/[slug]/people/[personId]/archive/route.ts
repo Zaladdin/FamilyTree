@@ -2,15 +2,17 @@ import { NextResponse } from "next/server";
 import { requireFamilyRole } from "@/lib/auth";
 import { HttpError } from "@/lib/http-error";
 import { archivePersonInFamily } from "@/lib/family-repository";
+import { assertSameOrigin } from "@/lib/request-validation";
 
 type RouteContext = {
   params: Promise<{ slug: string; personId: string }>;
 };
 
-export async function POST(_request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const { slug, personId } = await context.params;
 
   try {
+    assertSameOrigin(request);
     const access = await requireFamilyRole(slug, ["owner", "admin", "editor"]);
     await archivePersonInFamily({
       slug,

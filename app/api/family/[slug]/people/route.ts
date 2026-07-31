@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireFamilyRole } from "@/lib/auth";
 import { HttpError } from "@/lib/http-error";
 import { createPersonInFamily } from "@/lib/family-repository";
-import { parseAddPersonInput } from "@/lib/request-validation";
+import { assertSameOrigin, parseAddPersonInput } from "@/lib/request-validation";
 
 type RouteContext = {
   params: Promise<{ slug: string }>;
@@ -12,6 +12,7 @@ export async function POST(request: Request, context: RouteContext) {
   const { slug } = await context.params;
 
   try {
+    assertSameOrigin(request);
     const access = await requireFamilyRole(slug, ["owner", "admin", "editor"]);
     const payload = parseAddPersonInput(await request.json());
     const person = await createPersonInFamily(

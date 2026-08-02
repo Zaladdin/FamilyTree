@@ -246,6 +246,11 @@ export async function requireFamilyRole(slug: string, allowedRoles: FamilyRole[]
   };
 }
 
+// Well-formed but unmatchable hash (salt:hash of zeros). Verifying against it
+// makes the "unknown email" path pay the same scrypt cost as a real password
+// check, so response timing does not reveal whether an account exists.
+const TIMING_EQUALIZER_HASH = `${"0".repeat(32)}:${"0".repeat(128)}`;
+
 export async function authenticateUser(email: string, password: string) {
   const normalizedEmail = normalizeEmail(email);
   const user = await prisma.user.findUnique({
@@ -253,6 +258,7 @@ export async function authenticateUser(email: string, password: string) {
   });
 
   if (!user) {
+    await verifyPassword(password, TIMING_EQUALIZER_HASH);
     throw new HttpError(401, "Неверный email или пароль.");
   }
 

@@ -73,6 +73,16 @@ const initialAddFormState = (
   relativePersonId: focusPersonId,
 });
 
+// API мутаций над людьми подтверждает успех наличием personId в ответе,
+// поэтому его отсутствие трактуем как ошибку даже при статусе 200.
+function requirePersonId(result: ApiResponse, fallbackError: string): string {
+  if (!result.personId) {
+    throw new Error(result.error ?? fallbackError);
+  }
+
+  return result.personId;
+}
+
 const initialEditFormState = (person: FamilyPerson): EditFormState => ({
   firstName: person.firstName,
   lastName: person.lastName,
@@ -215,11 +225,40 @@ export function FamilyApp({
     });
   }
 
-  async function handleAddSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  // Общий каркас всех мутаций: сброс сообщений, блокировка формы, разбор
+  // ответа API и единая обработка ошибок. onSuccess выполняется внутри try,
+  // поэтому может выбросить ошибку и попасть в общий catch.
+  async function runAction({
+    request,
+    fallbackError,
+    onSuccess,
+  }: {
+    request: () => Promise<Response>;
+    fallbackError: string;
+    onSuccess: (result: ApiResponse) => void;
+  }) {
     setErrorMessage("");
     setSuccessMessage("");
     setIsSubmitting(true);
+
+    try {
+      const response = await request();
+      const result = (await response.json()) as ApiResponse;
+
+      if (!response.ok) {
+        throw new Error(result.error ?? fallbackError);
+      }
+
+      onSuccess(result);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : fallbackError);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleAddSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
     const payload: AddPersonInput = {
       firstName: addFormState.firstName,
@@ -233,39 +272,32 @@ export function FamilyApp({
       relativePersonId: addFormState.relativePersonId,
     };
 
-    try {
-      const response = await fetch(`/api/family/${family.slug}/people`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+    await runAction({
+      request: () =>
+        fetch(`/api/family/${family.slug}/people`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }),
+      fallbackError: "Не удалось добавить человека.",
+      onSuccess: (result) => {
+        const personId = requirePersonId(result, "Не удалось добавить человека.");
 
-      const result = (await response.json()) as ApiResponse;
+        setAddFormState(initialAddFormState(personId));
+        setActiveSheet(null);
+        setSuccessMessage(result.message ?? "Человек добавлен.");
 
-      if (!response.ok || !result.personId) {
-        throw new Error(result.error ?? "Не удалось добавить человека.");
-      }
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("person", personId);
 
-      setAddFormState(initialAddFormState(result.personId));
-      setActiveSheet(null);
-      setSuccessMessage(result.message ?? "Человек добавлен.");
-
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("person", result.personId);
-
-      startTransition(() => {
-        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Не удалось добавить человека.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+          router.refresh();
+        });
+      },
+    });
   }
 
   async function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -274,10 +306,6 @@ export function FamilyApp({
     if (!editFormState) {
       return;
     }
-
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsSubmitting(true);
 
     const payload: UpdatePersonInput = {
       firstName: editFormState.firstName,
@@ -292,39 +320,27 @@ export function FamilyApp({
       deathDate: editFormState.deathDate,
     };
 
-    try {
-      const response = await fetch(
-        `/api/family/${family.slug}/people/${focusPerson.id}`,
-        {
+    await runAction({
+      request: () =>
+        fetch(`/api/family/${family.slug}/people/${focusPerson.id}`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(payload),
-        },
-      );
+        }),
+      fallbackError: "Не удалось обновить карточку человека.",
+      onSuccess: (result) => {
+        requirePersonId(result, "Не удалось обновить карточку человека.");
 
-      const result = (await response.json()) as ApiResponse;
+        setActiveSheet(null);
+        setSuccessMessage(result.message ?? "Карточка обновлена.");
 
-      if (!response.ok || !result.personId) {
-        throw new Error(result.error ?? "Не удалось обновить карточку человека.");
-      }
-
-      setActiveSheet(null);
-      setSuccessMessage(result.message ?? "Карточка обновлена.");
-
-      startTransition(() => {
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "Не удалось обновить карточку человека.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.refresh();
+        });
+      },
+    });
   }
 
   async function handleUploadMediaSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -332,175 +348,117 @@ export function FamilyApp({
     setErrorMessage("");
     setSuccessMessage("");
 
-    if (!uploadMediaState.file) {
+    const file = uploadMediaState.file;
+
+    if (!file) {
       setErrorMessage("Сначала выбери файл для загрузки.");
       return;
     }
 
-    setIsSubmitting(true);
+    await runAction({
+      request: () => {
+        const formData = new FormData();
+        formData.append("type", uploadMediaState.type);
+        formData.append("file", file);
 
-    try {
-      const formData = new FormData();
-      formData.append("type", uploadMediaState.type);
-      formData.append("file", uploadMediaState.file);
-
-      const response = await fetch(
-        `/api/family/${family.slug}/people/${focusPerson.id}/media`,
-        {
+        return fetch(`/api/family/${family.slug}/people/${focusPerson.id}/media`, {
           method: "POST",
           body: formData,
-        },
-      );
+        });
+      },
+      fallbackError: "Не удалось загрузить файл.",
+      onSuccess: (result) => {
+        setActiveSheet(null);
+        setUploadMediaState({
+          type: "photo",
+          file: null,
+        });
+        setSuccessMessage(result.message ?? "Файл добавлен.");
 
-      const result = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Не удалось загрузить файл.");
-      }
-
-      setActiveSheet(null);
-      setUploadMediaState({
-        type: "photo",
-        file: null,
-      });
-      setSuccessMessage(result.message ?? "Файл добавлен.");
-
-      startTransition(() => {
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось загрузить файл.");
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.refresh();
+        });
+      },
+    });
   }
 
   async function handleDeleteMedia(asset: MediaAsset) {
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsSubmitting(true);
+    await runAction({
+      request: () =>
+        fetch(
+          `/api/family/${family.slug}/people/${focusPerson.id}/media/${asset.id}`,
+          {
+            method: "DELETE",
+          },
+        ),
+      fallbackError: "Не удалось удалить медиафайл.",
+      onSuccess: (result) => {
+        setSuccessMessage(result.message ?? "Медиафайл удален.");
 
-    try {
-      const response = await fetch(
-        `/api/family/${family.slug}/people/${focusPerson.id}/media/${asset.id}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      const result = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Не удалось удалить медиафайл.");
-      }
-
-      setSuccessMessage(result.message ?? "Медиафайл удален.");
-
-      startTransition(() => {
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Не удалось удалить медиафайл.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.refresh();
+        });
+      },
+    });
   }
 
   async function handleArchivePerson() {
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch(
-        `/api/family/${family.slug}/people/${focusPerson.id}/archive`,
-        {
+    await runAction({
+      request: () =>
+        fetch(`/api/family/${family.slug}/people/${focusPerson.id}/archive`, {
           method: "POST",
-        },
-      );
+        }),
+      fallbackError: "Не удалось архивировать человека.",
+      onSuccess: (result) => {
+        requirePersonId(result, "Не удалось архивировать человека.");
 
-      const result = (await response.json()) as ApiResponse;
+        const nextPerson =
+          family.people.find((person) => person.id !== focusPerson.id) ?? family.people[0];
 
-      if (!response.ok || !result.personId) {
-        throw new Error(result.error ?? "Не удалось архивировать человека.");
-      }
+        if (!nextPerson || nextPerson.id === focusPerson.id) {
+          throw new Error("Не удалось подобрать новый фокус дерева после архивации.");
+        }
 
-      const nextPerson =
-        family.people.find((person) => person.id !== focusPerson.id) ?? family.people[0];
+        setSuccessMessage(result.message ?? "Человек архивирован.");
 
-      if (!nextPerson || nextPerson.id === focusPerson.id) {
-        throw new Error("Не удалось подобрать новый фокус дерева после архивации.");
-      }
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("person", nextPerson.id);
 
-      setSuccessMessage(result.message ?? "Человек архивирован.");
-
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("person", nextPerson.id);
-
-      startTransition(() => {
-        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Не удалось архивировать человека.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+          router.refresh();
+        });
+      },
+    });
   }
 
   async function handleCreateStorySubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setErrorMessage("");
-    setSuccessMessage("");
-    setIsSubmitting(true);
 
-    try {
-      const response = await fetch(
-        `/api/family/${family.slug}/people/${focusPerson.id}/stories`,
-        {
+    await runAction({
+      request: () =>
+        fetch(`/api/family/${family.slug}/people/${focusPerson.id}/stories`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(storyFormState),
-        },
-      );
+        }),
+      fallbackError: "Не удалось добавить историю.",
+      onSuccess: (result) => {
+        setActiveSheet(null);
+        setStoryFormState({
+          title: "",
+          narrator: "",
+          body: "",
+        });
+        setSuccessMessage(result.message ?? "История добавлена.");
 
-      const result = (await response.json()) as {
-        error?: string;
-        message?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(result.error ?? "Не удалось добавить историю.");
-      }
-
-      setActiveSheet(null);
-      setStoryFormState({
-        title: "",
-        narrator: "",
-        body: "",
-      });
-      setSuccessMessage(result.message ?? "История добавлена.");
-
-      startTransition(() => {
-        router.refresh();
-      });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Не удалось добавить историю.");
-    } finally {
-      setIsSubmitting(false);
-    }
+        startTransition(() => {
+          router.refresh();
+        });
+      },
+    });
   }
 
   return (

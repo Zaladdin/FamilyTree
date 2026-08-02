@@ -26,38 +26,6 @@ const familyOverviewInclude = {
   },
 } satisfies Prisma.FamilyInclude;
 
-const familyMutationInclude = {
-  memberships: true,
-  digitizationTasks: true,
-  people: {
-    include: {
-      mediaAssets: {
-        orderBy: {
-          createdAt: "desc",
-        },
-      },
-      stories: {
-        orderBy: {
-          createdAt: "desc",
-        },
-      },
-      timelineEvents: {
-        orderBy: {
-          order: "asc",
-        },
-      },
-    },
-    orderBy: [{ birthDate: "asc" }, { firstName: "asc" }],
-  },
-  relationships: true,
-  auditLogs: {
-    take: 12,
-    orderBy: {
-      createdAt: "desc",
-    },
-  },
-} satisfies Prisma.FamilyInclude;
-
 const familyJournalInclude = {
   ...familyOverviewInclude,
   auditLogs: {
@@ -95,17 +63,11 @@ type FamilyOverviewRecord = Prisma.FamilyGetPayload<{
   include: typeof familyOverviewInclude;
 }>;
 
-type FamilyMutationRecord = Prisma.FamilyGetPayload<{
-  include: typeof familyMutationInclude;
-}>;
-
 type PersonDetailRecord = Prisma.PersonGetPayload<{
   include: typeof personDetailInclude;
 }>;
 
-function mapPersonSummary(
-  person: FamilyOverviewRecord["people"][number] | FamilyMutationRecord["people"][number],
-): FamilyPerson {
+function mapPersonSummary(person: FamilyOverviewRecord["people"][number]): FamilyPerson {
   return {
     id: person.id,
     firstName: person.firstName,
@@ -185,7 +147,7 @@ function mapPersonDetail(person: PersonDetailRecord): FamilyPerson {
   };
 }
 
-function mapFamily(record: FamilyOverviewRecord | FamilyMutationRecord): Family {
+function mapFamily(record: FamilyOverviewRecord): Family {
   const activePeople = record.people.filter((person) => !person.isArchived);
   const archivedPeople = record.people.filter((person) => person.isArchived);
   const activePersonIds = new Set(activePeople.map((person) => person.id));
@@ -313,13 +275,6 @@ async function recomputeFamilyStats(
   });
 }
 
-async function loadFamilyRecordBySlug(slug: string) {
-  return prisma.family.findUnique({
-    where: { slug },
-    include: familyMutationInclude,
-  });
-}
-
 async function loadFamilyOverviewRecordBySlug(slug: string) {
   return prisma.family.findUnique({
     where: { slug },
@@ -338,6 +293,31 @@ async function loadPersonDetailById(personId: string) {
   return prisma.person.findUnique({
     where: { id: personId },
     include: personDetailInclude,
+  });
+}
+
+// Mutations that touch a single person only need the family id and that
+// person's name/flags, so they use these narrow lookups instead of loading the
+// whole family with every media asset, story and timeline event.
+async function loadFamilyIdBySlug(slug: string) {
+  const family = await prisma.family.findUnique({
+    where: { slug },
+    select: { id: true },
+  });
+
+  return family?.id ?? null;
+}
+
+async function loadPersonInFamily(familyId: string, personId: string) {
+  return prisma.person.findFirst({
+    where: { id: personId, familyId },
+    select: {
+      id: true,
+      firstName: true,
+      middleName: true,
+      lastName: true,
+      isArchived: true,
+    },
   });
 }
 
@@ -399,7 +379,7 @@ export async function createPersonInFamily(
   input: AddPersonInput,
   actorName = "Система",
 ) {
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyRecord = await loadFamilyOverviewRecordBySlug(slug);
 
   if (!familyRecord) {
     throw new Error("Семья не найдена.");
@@ -476,7 +456,7 @@ export async function updatePersonInFamily(
   input: UpdatePersonInput,
   actorName = "Система",
 ) {
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyRecord = await loadFamilyOverviewRecordBySlug(slug);
 
   if (!familyRecord) {
     throw new Error("Семья не найдена.");
@@ -589,13 +569,13 @@ export async function createStoryForPerson(params: {
     narrator,
     actorName = "Система",
   } = params;
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyId = await loadFamilyIdBySlug(slug);
 
-  if (!familyRecord) {
+  if (!familyId) {
     throw new Error("Семья не найдена.");
   }
 
-  const person = familyRecord.people.find((currentPerson) => currentPerson.id === personId);
+  const person = await loadPersonInFamily(familyId, personId);
 
   if (!person) {
     throw new Error("Человек не найден.");
@@ -611,15 +591,15 @@ export async function createStoryForPerson(params: {
       },
     });
 
-    await recomputeFamilyStats(transaction, familyRecord.id);
+    await recomputeFamilyStats(transaction, familyId);
 
     await createAuditLog(transaction, {
-      familyId: familyRecord.id,
+      familyId,
       action: "story_added",
       actorName,
       personId,
-      personName: formatPersonName(mapPersonSummary(person)),
-      message: `${actorName} добавил(а) историю "${normalizeText(title)}" в карточку "${formatPersonName(mapPersonSummary(person))}".`,
+      personName: formatPersonName(person),
+      message: `${actorName} добавил(а) историю "${normalizeText(title)}" в карточку "${formatPersonName(person)}".`,
     });
 
     return createdStory;
@@ -646,13 +626,13 @@ export async function createMediaAssetForPerson(params: {
 }) {
   const { slug, personId, type, title, storagePath, mimeType, size, actorName = "Система" } =
     params;
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyId = await loadFamilyIdBySlug(slug);
 
-  if (!familyRecord) {
+  if (!familyId) {
     throw new Error("Семья не найдена.");
   }
 
-  const person = familyRecord.people.find((currentPerson) => currentPerson.id === personId);
+  const person = await loadPersonInFamily(familyId, personId);
 
   if (!person) {
     throw new Error("Человек не найден.");
@@ -688,15 +668,15 @@ export async function createMediaAssetForPerson(params: {
             },
     });
 
-    await recomputeFamilyStats(transaction, familyRecord.id);
+    await recomputeFamilyStats(transaction, familyId);
 
     await createAuditLog(transaction, {
-      familyId: familyRecord.id,
+      familyId,
       action: "media_added",
       actorName,
       personId,
-      personName: formatPersonName(mapPersonSummary(person)),
-      message: `${actorName} добавил(а) ${type === "photo" ? "фото" : "аудио"} в карточку "${formatPersonName(mapPersonSummary(person))}".`,
+      personName: formatPersonName(person),
+      message: `${actorName} добавил(а) ${type === "photo" ? "фото" : "аудио"} в карточку "${formatPersonName(person)}".`,
     });
 
     return createdAsset;
@@ -720,19 +700,21 @@ export async function deleteMediaAssetFromPerson(params: {
   actorName?: string;
 }) {
   const { slug, personId, assetId, actorName = "Система" } = params;
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyId = await loadFamilyIdBySlug(slug);
 
-  if (!familyRecord) {
+  if (!familyId) {
     throw new Error("Семья не найдена.");
   }
 
-  const person = familyRecord.people.find((currentPerson) => currentPerson.id === personId);
+  const person = await loadPersonInFamily(familyId, personId);
 
   if (!person) {
     throw new Error("Человек не найден.");
   }
 
-  const asset = person.mediaAssets.find((currentAsset) => currentAsset.id === assetId);
+  const asset = await prisma.mediaAsset.findFirst({
+    where: { id: assetId, personId },
+  });
 
   if (!asset) {
     throw new Error("Медиафайл не найден.");
@@ -761,15 +743,15 @@ export async function deleteMediaAssetFromPerson(params: {
             },
     });
 
-    await recomputeFamilyStats(transaction, familyRecord.id);
+    await recomputeFamilyStats(transaction, familyId);
 
     await createAuditLog(transaction, {
-      familyId: familyRecord.id,
+      familyId,
       action: "media_deleted",
       actorName,
       personId,
-      personName: formatPersonName(mapPersonSummary(person)),
-      message: `${actorName} удалил(а) ${asset.type === "photo" ? "фото" : "аудио"} из карточки "${formatPersonName(mapPersonSummary(person))}".`,
+      personName: formatPersonName(person),
+      message: `${actorName} удалил(а) ${asset.type === "photo" ? "фото" : "аудио"} из карточки "${formatPersonName(person)}".`,
     });
   });
 
@@ -816,14 +798,13 @@ export async function archivePersonInFamily(params: {
   actorName?: string;
 }) {
   const { slug, personId, actorName = "Система" } = params;
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyId = await loadFamilyIdBySlug(slug);
 
-  if (!familyRecord) {
+  if (!familyId) {
     throw new Error("Семья не найдена.");
   }
 
-  const activePeopleCount = familyRecord.people.filter((person) => !person.isArchived).length;
-  const person = familyRecord.people.find((currentPerson) => currentPerson.id === personId);
+  const person = await loadPersonInFamily(familyId, personId);
 
   if (!person) {
     throw new Error("Человек не найден.");
@@ -832,6 +813,10 @@ export async function archivePersonInFamily(params: {
   if (person.isArchived) {
     throw new Error("Этот человек уже находится в архиве.");
   }
+
+  const activePeopleCount = await prisma.person.count({
+    where: { familyId, isArchived: false },
+  });
 
   if (activePeopleCount <= 1) {
     throw new Error("Нельзя архивировать последнего активного человека в семье.");
@@ -845,15 +830,15 @@ export async function archivePersonInFamily(params: {
       },
     });
 
-    await recomputeFamilyStats(transaction, familyRecord.id);
+    await recomputeFamilyStats(transaction, familyId);
 
     await createAuditLog(transaction, {
-      familyId: familyRecord.id,
+      familyId,
       action: "person_archived",
       actorName,
       personId,
-      personName: formatPersonName(mapPersonSummary(person)),
-      message: `${actorName} перенес(ла) "${formatPersonName(mapPersonSummary(person))}" в архив семьи.`,
+      personName: formatPersonName(person),
+      message: `${actorName} перенес(ла) "${formatPersonName(person)}" в архив семьи.`,
     });
   });
 
@@ -866,13 +851,13 @@ export async function restorePersonInFamily(params: {
   actorName?: string;
 }) {
   const { slug, personId, actorName = "Система" } = params;
-  const familyRecord = await loadFamilyRecordBySlug(slug);
+  const familyId = await loadFamilyIdBySlug(slug);
 
-  if (!familyRecord) {
+  if (!familyId) {
     throw new Error("Семья не найдена.");
   }
 
-  const person = familyRecord.people.find((currentPerson) => currentPerson.id === personId);
+  const person = await loadPersonInFamily(familyId, personId);
 
   if (!person) {
     throw new Error("Человек не найден.");
@@ -890,15 +875,15 @@ export async function restorePersonInFamily(params: {
       },
     });
 
-    await recomputeFamilyStats(transaction, familyRecord.id);
+    await recomputeFamilyStats(transaction, familyId);
 
     await createAuditLog(transaction, {
-      familyId: familyRecord.id,
+      familyId,
       action: "person_restored",
       actorName,
       personId,
-      personName: formatPersonName(mapPersonSummary(person)),
-      message: `${actorName} восстановил(а) "${formatPersonName(mapPersonSummary(person))}" из архива.`,
+      personName: formatPersonName(person),
+      message: `${actorName} восстановил(а) "${formatPersonName(person)}" из архива.`,
     });
   });
 

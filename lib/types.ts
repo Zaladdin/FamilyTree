@@ -11,7 +11,10 @@ export type AuditAction =
   | "media_deleted"
   | "person_archived"
   | "person_restored"
-  | "story_added";
+  | "story_added"
+  | "member_added"
+  | "member_role_changed"
+  | "member_removed";
 
 export type FamilyStats = {
   people: number;
@@ -91,6 +94,23 @@ export type FamilyRelationship = {
 export type FamilyMembership = {
   name: string;
   role: FamilyRole;
+};
+
+export type FamilyMemberView = {
+  membershipId: string;
+  name: string;
+  email: string | null;
+  role: FamilyRole;
+  isViewer: boolean;
+  createdAt: string;
+};
+
+export const FAMILY_ROLE_LABELS: Record<FamilyRole, string> = {
+  owner: "Владелец",
+  admin: "Администратор",
+  editor: "Редактор",
+  member: "Участник",
+  guest: "Гость",
 };
 
 export type UserFamilySummary = {

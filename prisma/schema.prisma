@@ -49,6 +49,9 @@ enum AuditAction {
   person_archived
   person_restored
   story_added
+  member_added
+  member_role_changed
+  member_removed
 }
 
 model Family {

@@ -1,20 +1,11 @@
-import test, { after } from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  authenticateUser,
-  createSession,
-  getFamilyRoleForUserId,
   hashPassword,
   hashSessionToken,
   normalizeSafeRedirectPath,
   verifyPassword,
 } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
-import { prisma } from "@/lib/prisma";
-
-after(async () => {
-  await prisma.$disconnect();
-});
 
 test("hashPassword and verifyPassword work together", async () => {
   const hash = await hashPassword("super-secret");
@@ -23,38 +14,20 @@ test("hashPassword and verifyPassword work together", async () => {
   assert.equal(await verifyPassword("wrong-password", hash), false);
 });
 
-test("authenticateUser allows seeded demo user and rejects bad password", async () => {
-  const user = await authenticateUser("timur@rodovo.app", "12345678");
-
-  assert.equal(user.email, "timur@rodovo.app");
-
-  await assert.rejects(
-    () => authenticateUser("timur@rodovo.app", "bad-password"),
-    (error) =>
-      error instanceof HttpError &&
-      error.status === 401 &&
-      /Неверный email или пароль/.test(error.message),
-  );
+test("password hashes use a fresh salt and malformed hashes are rejected", async () => {
+  const first = await hashPassword("super-secret");
+  const second = await hashPassword("super-secret");
+  assert.notEqual(first, second);
+  assert.equal(await verifyPassword("super-secret", "invalid-hash"), false);
+  assert.equal(await verifyPassword("super-secret", "salt:00"), false);
 });
 
-test("getFamilyRoleForUserId returns membership role for seeded family", async () => {
-  const role = await getFamilyRoleForUserId("user-timur", "akhmedov");
-
-  assert.equal(role, "owner");
-});
-
-test("createSession stores only token hash in database", async () => {
-  const session = await createSession("user-timur");
-  const stored = await prisma.session.findFirst({
-    where: {
-      userId: "user-timur",
-      tokenHash: hashSessionToken(session.token),
-    },
-  });
-
-  assert.ok(stored);
-  assert.equal(stored?.tokenHash, hashSessionToken(session.token));
-  assert.notEqual(stored?.tokenHash, session.token);
+test("session tokens are hashed deterministically without retaining plaintext", () => {
+  const token = "random-session-token";
+  assert.match(hashSessionToken(token), /^[a-f0-9]{64}$/);
+  assert.equal(hashSessionToken(token), hashSessionToken(token));
+  assert.notEqual(hashSessionToken(token), hashSessionToken("another-token"));
+  assert.notEqual(hashSessionToken(token), token);
 });
 
 test("normalizeSafeRedirectPath keeps only internal app paths", () => {

@@ -36,15 +36,16 @@ export default async function FamilyPage({
     notFound();
   }
 
-  const family = await getFamilyBySlug(slug, person);
+  const canEdit = viewerRole === "owner" || viewerRole === "admin" || viewerRole === "editor";
+  const family = await getFamilyBySlug(slug, person, { includeDeletedStories: canEdit });
 
   if (!family) {
     notFound();
   }
 
-  const fallbackPersonId = family.people[0]?.id;
-  const focusPersonId = person ?? fallbackPersonId;
-  const canEdit = viewerRole === "owner" || viewerRole === "admin" || viewerRole === "editor";
+  const focusPersonId = person && family.people.some((candidate) => candidate.id === person)
+    ? person
+    : null;
 
   return (
     <main className="page-shell">

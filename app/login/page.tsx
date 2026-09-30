@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getCurrentUser, normalizeSafeRedirectPath } from "@/lib/auth";
 import { AuthShell } from "@/components/auth-shell";
 import { SiteHeader } from "@/components/site-header";
@@ -22,9 +23,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       <AuthShell
         eyebrow="Вход"
         title="Войдите в семейный архив"
-        description="Откройте свое семейное пространство, продолжите наполнять древо и возвращайтесь к голосам памяти в одном месте."
+        description="Рады видеть вас снова. Ваши близкие, фотографии и незаписанные истории уже ждут."
         asideTitle="Один аккаунт, несколько семей"
-        asideText="Пользователь может состоять в нескольких семейных пространствах: своей семье, семье супруги и отдельном архиве рода."
+        asideText="Собирайте историю своей семьи и семьи любимого человека. Переключайтесь между архивами с одним аккаунтом."
         points={[
           "Переход между семьями без повторной регистрации",
           "Роли доступа: владелец, редактор, участник, гость",
@@ -36,7 +37,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       >
         <form action="/api/auth/login" className="form-stack" method="post">
           <label className="form-field">
-            <span>Email</span>
+            <span>Электронная почта</span>
             <input autoComplete="email" name="email" required type="email" />
           </label>
           <label className="form-field">
@@ -44,7 +45,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             <input autoComplete="current-password" name="password" required type="password" />
           </label>
           <input name="redirectTo" type="hidden" value={safeRedirectTo} />
-          {error ? <p className="form-message error">{error}</p> : null}
+          <Link href="/forgot-password">Забыли пароль?</Link>
+          {error ? <p className="form-message error" role="alert">{error}</p> : null}
           <div className="form-actions">
             <button className="primary-button" type="submit">
               Войти в аккаунт

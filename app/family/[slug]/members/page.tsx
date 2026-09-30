@@ -7,6 +7,7 @@ import {
   normalizeSafeRedirectPath,
 } from "@/lib/auth";
 import { getFamilyMembersPageData } from "@/lib/family-members";
+import { getFamilyInvitations } from "@/lib/family-invitations";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,10 @@ export default async function FamilyMembersPage({ params }: FamilyMembersPagePro
     notFound();
   }
 
+  const invitations = viewerRole === "owner" || viewerRole === "admin"
+    ? await getFamilyInvitations(slug, currentUser.id)
+    : [];
+
   return (
     <main className="page-shell">
       <SiteHeader compact />
@@ -42,6 +47,7 @@ export default async function FamilyMembersPage({ params }: FamilyMembersPagePro
         backHref={`/family/${slug}`}
         familyTitle={pageData.familyTitle}
         members={pageData.members}
+        invitations={invitations}
         slug={slug}
         viewerRole={viewerRole}
       />

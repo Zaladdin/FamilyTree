@@ -1,6 +1,7 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { requireFamilyRole } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
 import { restorePersonInFamily } from "@/lib/family-repository";
 import { assertSameOrigin } from "@/lib/request-validation";
 
@@ -11,7 +12,7 @@ type RouteParams = {
   }>;
 };
 
-export async function POST(request: Request, { params }: RouteParams) {
+async function handlePOST(request: Request, { params }: RouteParams) {
   try {
     assertSameOrigin(request);
     const { slug, personId } = await params;
@@ -19,6 +20,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     await restorePersonInFamily({
       slug,
       personId,
+      actorUserId: access.user.id,
       actorName: `${access.user.firstName} ${access.user.lastName}`,
     });
 
@@ -27,15 +29,12 @@ export async function POST(request: Request, { params }: RouteParams) {
       personId,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось восстановить человека из архива.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось восстановить человека из архива.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
+
+export const POST = withObservedRoute("/api/family/[slug]/people/[personId]/restore", handlePOST);

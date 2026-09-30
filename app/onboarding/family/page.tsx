@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import Link from "next/link";
 import { AuthShell } from "@/components/auth-shell";
 import { FamilyOnboardingForm } from "@/components/family-onboarding-form";
 import { SiteHeader } from "@/components/site-header";
@@ -9,7 +8,7 @@ export default async function FamilyOnboardingPage() {
   const currentUser = await getCurrentUser();
 
   if (!currentUser) {
-    redirect("/login");
+    redirect("/login?redirectTo=%2Fonboarding%2Ffamily");
   }
 
   return (
@@ -27,8 +26,8 @@ export default async function FamilyOnboardingPage() {
           "Подготовка дерева до наполнения людьми и связями",
         ]}
         footerText="Хотите вернуться?"
-        footerLinkHref="/register"
-        footerLinkLabel="К регистрации"
+        footerLinkHref="/families"
+        footerLinkLabel="К моим семьям"
       >
         <FamilyOnboardingForm
           defaultDescription="Семейный архив с древом рода, фотографиями и голосовыми историями старших поколений."

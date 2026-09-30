@@ -20,6 +20,13 @@ enum PersonStatus {
 enum RelationshipType {
   parent
   spouse
+  sibling
+}
+
+enum RelationshipOrigin {
+  manual
+  spouse
+  sibling
 }
 
 enum FamilyRole {
@@ -41,17 +48,43 @@ enum MediaAssetType {
   audio
 }
 
+enum MediaAssetState {
+  pending
+  ready
+  deleting
+  failed
+}
+
 enum AuditAction {
   person_created
   person_updated
   media_added
   media_deleted
+  media_cleanup_failed
   person_archived
   person_restored
   story_added
+  story_updated
+  story_deleted
+  story_restored
   member_added
   member_role_changed
   member_removed
+  invitation_created
+  invitation_updated
+  invitation_revoked
+}
+
+enum AuthTokenPurpose {
+  verify_email
+  password_reset
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
 }
 
 model Family {
@@ -73,7 +106,9 @@ model Family {
   digitizationTasks DigitizationTask[]
   people            Person[]
   relationships     Relationship[]
+  parentSuppressions ParentSuppression[]
   auditLogs         AuditLog[]
+  invitations       FamilyInvitation[]
 }
 
 model User {
@@ -82,22 +117,69 @@ model User {
   lastName     String
   email        String             @unique
   passwordHash String
+  emailVerifiedAt DateTime?
+  legacyAccount Boolean @default(false)
+  sessionVersion Int @default(0)
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
   memberships  FamilyMembership[]
   sessions     Session[]
+  authTokens   AuthToken[]
+  sentInvitations FamilyInvitation[] @relation("InvitedBy")
+  acceptedInvitations FamilyInvitation[] @relation("AcceptedBy")
 }
 
 model Session {
   id        String   @id @default(cuid())
   tokenHash String   @unique
   userId    String
+  sessionVersion Int @default(0)
   expiresAt DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+model AuthToken {
+  id             String @id @default(cuid())
+  tokenHash      String @unique
+  purpose        AuthTokenPurpose
+  userId         String
+  email          String
+  sessionVersion Int
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime @default(now())
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, expiresAt])
+  @@index([expiresAt])
+}
+
+model FamilyInvitation {
+  id           String @id @default(cuid())
+  familyId     String
+  email        String
+  role         FamilyRole
+  invitedById  String
+  tokenHash    String @unique
+  expiresAt    DateTime
+  status       InvitationStatus @default(pending)
+  acceptedById String?
+  acceptedAt   DateTime?
+  version      Int @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  family       Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invitedBy    User @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Restrict)
+  acceptedBy   User? @relation("AcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+
+  @@unique([familyId, email])
+  @@index([invitedById])
+  @@index([acceptedById])
+  @@index([familyId, status, expiresAt])
 }
 
 model FamilyMembership {
@@ -141,6 +223,7 @@ model Person {
   birthPlace     String
   status         PersonStatus
   isArchived     Boolean         @default(false)
+  version        Int             @default(0)
   biography      String
   note           String?
   photosCount    Int             @default(0)
@@ -158,6 +241,8 @@ model Person {
   timelineEvents TimelineEvent[]
   outgoing       Relationship[]  @relation("RelationshipFromPerson")
   incoming       Relationship[]  @relation("RelationshipToPerson")
+  suppressedAsParent ParentSuppression[] @relation("SuppressedParent")
+  suppressedAsChild  ParentSuppression[] @relation("SuppressedChild")
 
   @@unique([familyId, firstName, lastName, middleName, birthDate])
   @@index([familyId])
@@ -171,17 +256,32 @@ model MediaAsset {
   storagePath String
   mimeType  String
   size      Int
+  state     MediaAssetState @default(ready)
+  checksum  String?
+  cleanupAttempts Int      @default(0)
+  lastErrorCode String?
+  cleanupAfter DateTime?
+  cleanupLeaseUntil DateTime?
+  cleanupLeaseToken String?
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   person     Person         @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@index([personId, type])
+  @@index([state, cleanupAfter])
+}
+
+enum TimelineEventKind {
+  custom
+  birth
+  death
 }
 
 model TimelineEvent {
   id        String   @id @default(cuid())
   personId   String
   label     String
+  kind      TimelineEventKind @default(custom)
   order     Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -192,6 +292,8 @@ model TimelineEvent {
 
 model Story {
   id         String   @id @default(cuid())
+  version    Int      @default(0)
+  deletedAt  DateTime?
   personId   String
   title      String
   body       String
@@ -201,6 +303,7 @@ model Story {
   person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@index([personId, createdAt])
+  @@index([personId, deletedAt])
 }
 
 model Relationship {
@@ -209,6 +312,9 @@ model Relationship {
   fromPersonId String
   toPersonId   String
   type         RelationshipType
+  origin       RelationshipOrigin @default(manual)
+  sourcePersonId String?
+  version      Int                @default(0)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
   family       Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
@@ -217,6 +323,21 @@ model Relationship {
 
   @@unique([familyId, fromPersonId, toPersonId, type])
   @@index([familyId])
+}
+
+model ParentSuppression {
+  id           String   @id @default(cuid())
+  familyId     String
+  fromPersonId String
+  toPersonId   String
+  createdAt    DateTime @default(now())
+  family       Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  fromPerson   Person   @relation("SuppressedParent", fields: [fromPersonId], references: [id], onDelete: Cascade)
+  toPerson     Person   @relation("SuppressedChild", fields: [toPersonId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, fromPersonId, toPersonId])
+  @@index([fromPersonId])
+  @@index([toPersonId])
 }
 
 model AuditLog {

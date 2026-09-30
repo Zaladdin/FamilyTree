@@ -1,11 +1,12 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { requireFamilyRole } from "@/lib/auth";
 import {
   parseAssignableRole,
   removeFamilyMember,
   updateFamilyMemberRole,
 } from "@/lib/family-members";
-import { HttpError } from "@/lib/http-error";
 import { assertSameOrigin } from "@/lib/request-validation";
 import { FAMILY_ROLE_LABELS } from "@/lib/types";
 
@@ -13,7 +14,7 @@ type RouteContext = {
   params: Promise<{ slug: string; membershipId: string }>;
 };
 
-export async function PATCH(request: Request, context: RouteContext) {
+async function handlePATCH(request: Request, context: RouteContext) {
   const { slug, membershipId } = await context.params;
 
   try {
@@ -28,7 +29,6 @@ export async function PATCH(request: Request, context: RouteContext) {
       role,
       actor: {
         userId: access.user.id,
-        role: access.role,
         name: `${access.user.firstName} ${access.user.lastName}`,
       },
     });
@@ -38,20 +38,15 @@ export async function PATCH(request: Request, context: RouteContext) {
       member,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось изменить роль участника.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось изменить роль участника.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
 
-export async function DELETE(request: Request, context: RouteContext) {
+async function handleDELETE(request: Request, context: RouteContext) {
   const { slug, membershipId } = await context.params;
 
   try {
@@ -71,7 +66,6 @@ export async function DELETE(request: Request, context: RouteContext) {
       membershipId,
       actor: {
         userId: access.user.id,
-        role: access.role,
         name: `${access.user.firstName} ${access.user.lastName}`,
       },
     });
@@ -83,15 +77,13 @@ export async function DELETE(request: Request, context: RouteContext) {
       leftFamily: result.isSelf,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось исключить участника.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось исключить участника.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
+
+export const PATCH = withObservedRoute("/api/family/[slug]/members/[membershipId]", handlePATCH);
+export const DELETE = withObservedRoute("/api/family/[slug]/members/[membershipId]", handleDELETE);

@@ -1,6 +1,7 @@
-import { assertValidEmail } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 import { HttpError } from "@/lib/http-error";
 import { prisma } from "@/lib/prisma";
+import { withSerializableTransaction } from "@/lib/serializable-transaction";
 import { FAMILY_ROLE_LABELS, FamilyMemberView, FamilyRole } from "@/lib/types";
 
 // Owner is created together with the family and can never be assigned here.
@@ -14,8 +15,8 @@ export function parseAssignableRole(value: unknown): FamilyRole {
   return value as FamilyRole;
 }
 
-async function requireFamilyIdBySlug(slug: string) {
-  const family = await prisma.family.findUnique({
+async function requireFamilyIdBySlug(slug: string, transaction: Prisma.TransactionClient = prisma) {
+  const family = await transaction.family.findUnique({
     where: { slug },
     select: { id: true },
   });
@@ -27,8 +28,8 @@ async function requireFamilyIdBySlug(slug: string) {
   return family.id;
 }
 
-async function requireMembership(familyId: string, membershipId: string) {
-  const membership = await prisma.familyMembership.findFirst({
+async function requireMembership(transaction: Prisma.TransactionClient, familyId: string, membershipId: string) {
+  const membership = await transaction.familyMembership.findFirst({
     where: { id: membershipId, familyId },
     select: {
       id: true,
@@ -43,6 +44,23 @@ async function requireMembership(familyId: string, membershipId: string) {
   }
 
   return membership;
+}
+
+async function requireActorRole(transaction: Prisma.TransactionClient, familyId: string, userId: string) {
+  if (typeof userId !== "string" || !userId.trim()) {
+    throw new HttpError(403, "Нет доступа к этой семье.");
+  }
+
+  const membership = await transaction.familyMembership.findFirst({
+    where: { familyId, userId },
+    select: { role: true },
+  });
+
+  if (!membership) {
+    throw new HttpError(403, "Нет доступа к этой семье.");
+  }
+
+  return membership.role;
 }
 
 function assertIsManager(actorRole: FamilyRole) {
@@ -122,89 +140,37 @@ export async function addFamilyMemberByEmail(params: {
   slug: string;
   email: string;
   role: FamilyRole;
-  actor: { userId: string; role: FamilyRole; name: string };
+  actor: { userId: string; name: string };
 }) {
-  const { slug, role, actor } = params;
-  const email = assertValidEmail(params.email);
-
-  assertCanAssignRole(actor.role, role);
-
-  const familyId = await requireFamilyIdBySlug(slug);
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true, firstName: true, lastName: true },
-  });
-
-  if (!user) {
-    throw new HttpError(
-      404,
-      "Пользователь с таким email не зарегистрирован. Попросите родственника сначала создать аккаунт.",
-    );
-  }
-
-  const existing = await prisma.familyMembership.findFirst({
-    where: { familyId, userId: user.id },
-    select: { id: true },
-  });
-
-  if (existing) {
-    throw new HttpError(409, "Этот пользователь уже состоит в семье.");
-  }
-
-  const memberName = `${user.firstName} ${user.lastName}`;
-
-  const membership = await prisma.$transaction(async (transaction) => {
-    const created = await transaction.familyMembership.create({
-      data: {
-        familyId,
-        userId: user.id,
-        name: memberName,
-        role,
-      },
-    });
-
-    await transaction.family.update({
-      where: { id: familyId },
-      data: { contributorsCount: { increment: 1 } },
-    });
-
-    await transaction.auditLog.create({
-      data: {
-        familyId,
-        action: "member_added",
-        actorName: actor.name,
-        message: `${actor.name} добавил(а) участника "${memberName}" с ролью "${FAMILY_ROLE_LABELS[role]}".`,
-      },
-    });
-
-    return created;
-  });
-
-  return { membershipId: membership.id, name: memberName, role };
+  // Compatibility entry point: an email never grants membership before verified acceptance.
+  const { createFamilyInvitation } = await import("@/lib/family-invitations");
+  return createFamilyInvitation(params);
 }
 
 export async function updateFamilyMemberRole(params: {
   slug: string;
   membershipId: string;
   role: FamilyRole;
-  actor: { userId: string; role: FamilyRole; name: string };
+  actor: { userId: string; name: string };
 }) {
-  const { slug, membershipId, role, actor } = params;
-  const familyId = await requireFamilyIdBySlug(slug);
-  const membership = await requireMembership(familyId, membershipId);
+  const { slug, membershipId, actor } = params;
+  const role = parseAssignableRole(params.role);
+  return withSerializableTransaction(async (transaction) => {
+    const familyId = await requireFamilyIdBySlug(slug, transaction);
+    const actorRole = await requireActorRole(transaction, familyId, actor.userId);
+    const membership = await requireMembership(transaction, familyId, membershipId);
 
-  assertCanManageTarget(actor.role, membership.role);
-  assertCanAssignRole(actor.role, role);
+    assertCanManageTarget(actorRole, membership.role);
+    assertCanAssignRole(actorRole, role);
 
-  if (membership.userId === actor.userId) {
-    throw new HttpError(403, "Нельзя менять собственную роль.");
-  }
+    if (membership.userId === actor.userId) {
+      throw new HttpError(403, "Нельзя менять собственную роль.");
+    }
 
-  if (membership.role === role) {
-    return { membershipId, name: membership.name, role };
-  }
+    if (membership.role === role) {
+      return { membershipId, name: membership.name, role };
+    }
 
-  await prisma.$transaction(async (transaction) => {
     await transaction.familyMembership.update({
       where: { id: membershipId },
       data: { role },
@@ -218,32 +184,31 @@ export async function updateFamilyMemberRole(params: {
         message: `${actor.name} изменил(а) роль участника "${membership.name}" на "${FAMILY_ROLE_LABELS[role]}".`,
       },
     });
+    return { membershipId, name: membership.name, role };
   });
-
-  return { membershipId, name: membership.name, role };
 }
 
 export async function removeFamilyMember(params: {
   slug: string;
   membershipId: string;
-  actor: { userId: string; role: FamilyRole; name: string };
+  actor: { userId: string; name: string };
 }) {
   const { slug, membershipId, actor } = params;
-  const familyId = await requireFamilyIdBySlug(slug);
-  const membership = await requireMembership(familyId, membershipId);
-  const isSelf = membership.userId === actor.userId;
+  return withSerializableTransaction(async (transaction) => {
+    const familyId = await requireFamilyIdBySlug(slug, transaction);
+    const actorRole = await requireActorRole(transaction, familyId, actor.userId);
+    const membership = await requireMembership(transaction, familyId, membershipId);
+    const isSelf = membership.userId === actor.userId;
 
-  // Any non-owner may leave the family; removing someone else follows the
-  // regular management rules.
-  if (isSelf) {
-    if (membership.role === "owner") {
-      throw new HttpError(403, "Владелец не может покинуть собственную семью.");
+    // Any non-owner may leave; all other removals require current manager rights.
+    if (isSelf) {
+      if (membership.role === "owner") {
+        throw new HttpError(403, "Владелец не может покинуть собственную семью.");
+      }
+    } else {
+      assertCanManageTarget(actorRole, membership.role);
     }
-  } else {
-    assertCanManageTarget(actor.role, membership.role);
-  }
 
-  await prisma.$transaction(async (transaction) => {
     await transaction.familyMembership.delete({
       where: { id: membershipId },
     });
@@ -263,7 +228,6 @@ export async function removeFamilyMember(params: {
           : `${actor.name} исключил(а) участника "${membership.name}" из семьи.`,
       },
     });
+    return { membershipId, name: membership.name, isSelf };
   });
-
-  return { membershipId, name: membership.name, isSelf };
 }

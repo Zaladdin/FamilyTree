@@ -1,10 +1,12 @@
+import { withObservedRoute } from "@/lib/observability";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { clearSessionCookie, destroySession, getCurrentSession } from "@/lib/auth";
 import { HttpError } from "@/lib/http-error";
 import { assertSameOrigin } from "@/lib/request-validation";
+import { getRequestOrigin } from "@/lib/request-origin";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     assertSameOrigin(request);
   } catch (error) {
@@ -23,5 +25,7 @@ export async function POST(request: Request) {
 
   await clearSessionCookie();
 
-  return NextResponse.redirect(new URL("/login", request.url), 303);
+  return NextResponse.redirect(new URL("/login", getRequestOrigin(request)), 303);
 }
+
+export const POST = withObservedRoute("/api/auth/logout", handlePOST);

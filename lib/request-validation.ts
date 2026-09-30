@@ -1,6 +1,17 @@
-import { AddPersonInput, AddRelationshipKind, UpdatePersonInput } from "@/lib/family-logic";
+import { MAX_ADDITIONAL_RELATIONSHIPS, type AddPersonInput, type AddRelationshipKind, type PersonRelationshipInput, type PersonUpdateRequest, type UpdatePersonInput } from "@/lib/family-logic";
 import { Gender } from "@/lib/types";
 import { HttpError } from "@/lib/http-error";
+import { getRequestOrigin } from "@/lib/request-origin";
+import { normalizeMultilineText } from "@/lib/content-text";
+
+function multilineString(value: unknown, fieldName: string, maxLength: number, required = false) {
+  if (!required && (value === undefined || value === null)) return "";
+  if (typeof value !== "string") throw new HttpError(400, `Поле "${fieldName}" должно быть строкой.`);
+  const normalized = normalizeMultilineText(value);
+  if (required && !normalized) throw new HttpError(400, `Поле "${fieldName}" обязательно.`);
+  if (normalized.length > maxLength) throw new HttpError(400, `Поле "${fieldName}" слишком длинное.`);
+  return normalized;
+}
 
 function requireString(value: unknown, fieldName: string, maxLength = 4000) {
   if (typeof value !== "string") {
@@ -43,12 +54,13 @@ const MAX_YEAR = new Date().getFullYear() + 1;
 
 type ParsedDate = {
   value: string;
-  sortKey: number;
+  earliestKey: number;
+  latestKey: number;
 };
 
 // Accepts common human date formats used for genealogy:
 //   YYYY, YYYY-MM, YYYY-MM-DD, DD.MM.YYYY, MM.YYYY
-// Returns the trimmed value plus a numeric sort key for ordering / comparison.
+// Partial dates represent an interval; unknown months/days are not exact dates.
 function parseHumanDate(raw: string, fieldName: string): ParsedDate {
   const value = raw.trim();
 
@@ -57,7 +69,7 @@ function parseHumanDate(raw: string, fieldName: string): ParsedDate {
   let day: number | null = null;
 
   const isoMatch = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(value);
-  const dottedMatch = /^(?:(\d{2})\.)?(?:(\d{2})\.)?(\d{4})$/.exec(value);
+  const dottedMatch = /^(?:(\d{2})\.)?(\d{2})\.(\d{4})$/.exec(value);
 
   if (isoMatch) {
     year = Number(isoMatch[1]);
@@ -65,17 +77,12 @@ function parseHumanDate(raw: string, fieldName: string): ParsedDate {
     day = isoMatch[3] ? Number(isoMatch[3]) : null;
   } else if (dottedMatch) {
     year = Number(dottedMatch[3]);
-    // dd.mm.yyyy → groups [dd, mm, yyyy]; mm.yyyy → [undefined, mm, yyyy]
-    if (dottedMatch[1] && dottedMatch[2]) {
-      day = Number(dottedMatch[1]);
-      month = Number(dottedMatch[2]);
-    } else if (dottedMatch[2]) {
-      month = Number(dottedMatch[2]);
-    }
+    day = dottedMatch[1] ? Number(dottedMatch[1]) : null;
+    month = Number(dottedMatch[2]);
   } else {
     throw new HttpError(
       400,
-      `Поле "${fieldName}" должно быть датой в формате ГГГГ, ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.`,
+      `Поле "${fieldName}" должно быть датой в формате ГГГГ, ГГГГ-ММ, ГГГГ-ММ-ДД, ММ.ГГГГ или ДД.ММ.ГГГГ.`,
     );
   }
 
@@ -88,16 +95,18 @@ function parseHumanDate(raw: string, fieldName: string): ParsedDate {
   }
 
   if (day !== null) {
-    const daysInMonth = month !== null ? new Date(year, month, 0).getDate() : 31;
+    const daysInMonth = new Date(Date.UTC(year, month ?? 12, 0)).getUTCDate();
 
     if (day < 1 || day > daysInMonth) {
       throw new HttpError(400, `День в поле "${fieldName}" указан неверно.`);
     }
   }
 
-  const sortKey = year * 10000 + (month ?? 0) * 100 + (day ?? 0);
+  const earliestKey = year * 10000 + (month ?? 1) * 100 + (day ?? 1);
+  const lastDay = new Date(Date.UTC(year, month ?? 12, 0)).getUTCDate();
+  const latestKey = year * 10000 + (month ?? 12) * 100 + (day ?? lastDay);
 
-  return { value, sortKey };
+  return { value, earliestKey, latestKey };
 }
 
 function parseGender(value: unknown): Gender {
@@ -124,12 +133,60 @@ function parsePersonStatus(value: unknown): UpdatePersonInput["status"] {
   return value;
 }
 
-export function parseAddPersonInput(data: unknown): AddPersonInput {
-  if (!data || typeof data !== "object") {
+function parseDeathDate(status: UpdatePersonInput["status"], raw: unknown, birthDate: ParsedDate) {
+  if (status !== "deceased") return "";
+  const deathDate = parseHumanDate(requireString(raw, "Дата смерти", 120), "Дата смерти");
+  if (deathDate.latestKey < birthDate.earliestKey) {
+    throw new HttpError(400, "Дата смерти не может быть раньше даты рождения.");
+  }
+  return deathDate.value;
+}
+
+export function parseAddPersonInput(data: unknown, options: { allowDraftReferences?: boolean } = {}): AddPersonInput {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new HttpError(400, "Некорректный payload для создания человека.");
   }
 
   const payload = data as Record<string, unknown>;
+  if (!options.allowDraftReferences && payload.relativeClientId !== undefined && payload.relativeClientId !== "") {
+    throw new HttpError(400, "Связь с карточкой списка доступна только при добавлении нескольких людей.");
+  }
+  const relationshipKind = parseRelationshipKind(payload.relationshipKind);
+  const status = payload.status === undefined ? "living" : parsePersonStatus(payload.status);
+  let additionalRelationships: PersonRelationshipInput[] | undefined;
+  if (payload.additionalRelationships !== undefined) {
+    if (!Array.isArray(payload.additionalRelationships) || payload.additionalRelationships.length > MAX_ADDITIONAL_RELATIONSHIPS) {
+      throw new HttpError(400, `Можно указать не более ${MAX_ADDITIONAL_RELATIONSHIPS + 1} связей для одного человека.`);
+    }
+    additionalRelationships = payload.additionalRelationships.map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new HttpError(400, "Некорректная дополнительная родственная связь.");
+      }
+      const link = raw as Record<string, unknown>;
+      const relativePersonId = optionalString(link.relativePersonId, "Родственник", 120);
+      const relativeClientId = optionalString(link.relativeClientId, "Карточка родственника", 120);
+      if (relativeClientId && !options.allowDraftReferences) {
+        throw new HttpError(400, "Связь с карточкой списка доступна только при добавлении нескольких людей.");
+      }
+      if (Number(Boolean(relativePersonId)) + Number(Boolean(relativeClientId)) !== 1) {
+        throw new HttpError(400, "Выберите ровно одного родственника для каждой связи.");
+      }
+      return {
+        relationshipKind: parseRelationshipKind(link.relationshipKind), relativePersonId,
+        ...(relativeClientId ? { relativeClientId } : {}),
+      };
+    });
+  }
+  let sharedChildIds: string[] | undefined;
+  if (payload.sharedChildIds !== undefined) {
+    if (!Array.isArray(payload.sharedChildIds) || payload.sharedChildIds.length > 100) {
+      throw new HttpError(400, "Некорректный список общих детей.");
+    }
+    sharedChildIds = [...new Set(payload.sharedChildIds.map((id) => requireString(id, "Общий ребёнок", 120)))];
+    if (sharedChildIds.length && relationshipKind !== "spouse") {
+      throw new HttpError(400, "Общих детей можно указать только при добавлении супруга или супруги.");
+    }
+  }
   const birthDate = parseHumanDate(
     requireString(payload.birthDate, "Дата рождения", 120),
     "Дата рождения",
@@ -141,63 +198,51 @@ export function parseAddPersonInput(data: unknown): AddPersonInput {
     middleName: optionalString(payload.middleName, "Отчество", 120),
     gender: parseGender(payload.gender),
     birthDate: birthDate.value,
+    status,
+    deathDate: parseDeathDate(status, payload.deathDate, birthDate),
     birthPlace: requireString(payload.birthPlace, "Место рождения", 255),
-    biography: optionalString(payload.biography, "Биография", 6000),
-    relationshipKind: parseRelationshipKind(payload.relationshipKind),
+    biography: multilineString(payload.biography, "Биография", 6000),
+    relationshipKind,
     relativePersonId: optionalString(payload.relativePersonId, "Родственник", 120),
+    ...(sharedChildIds !== undefined ? { sharedChildIds } : {}),
+    ...(additionalRelationships !== undefined ? { additionalRelationships } : {}),
   };
 }
 
-export function parseUpdatePersonInput(data: unknown): UpdatePersonInput {
+export function parseUpdatePersonInput(data: unknown): PersonUpdateRequest {
   if (!data || typeof data !== "object") {
     throw new HttpError(400, "Некорректный payload для обновления человека.");
   }
 
   const payload = data as Record<string, unknown>;
+  const expectedVersion = payload.expectedVersion;
+  if (typeof expectedVersion !== "number" || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+    throw new HttpError(400, "Не указана корректная версия карточки. Обновите карточку перед редактированием.");
+  }
   const status = parsePersonStatus(payload.status);
   const birthDate = parseHumanDate(
     requireString(payload.birthDate, "Дата рождения", 120),
     "Дата рождения",
   );
-  const deathDate =
-    status === "deceased"
-      ? parseHumanDate(
-          requireString(payload.deathDate, "Дата смерти", 120),
-          "Дата смерти",
-        )
-      : null;
-
-  if (deathDate) {
-    const birthYear = Math.floor(birthDate.sortKey / 10000);
-    const deathYear = Math.floor(deathDate.sortKey / 10000);
-    const bothHaveMonth =
-      birthDate.sortKey % 10000 !== 0 && deathDate.sortKey % 10000 !== 0;
-
-    const deathBeforeBirth =
-      deathYear < birthYear ||
-      (deathYear === birthYear && bothHaveMonth && deathDate.sortKey < birthDate.sortKey);
-
-    if (deathBeforeBirth) {
-      throw new HttpError(400, "Дата смерти не может быть раньше даты рождения.");
-    }
-  }
+  const deathDate = parseDeathDate(status, payload.deathDate, birthDate);
 
   return {
+    expectedVersion,
     firstName: requireString(payload.firstName, "Имя", 120),
     lastName: requireString(payload.lastName, "Фамилия", 120),
     middleName: optionalString(payload.middleName, "Отчество", 120),
     gender: parseGender(payload.gender),
     birthDate: birthDate.value,
     birthPlace: requireString(payload.birthPlace, "Место рождения", 255),
-    biography: optionalString(payload.biography, "Биография", 6000),
-    note: optionalString(payload.note, "Заметка", 4000),
+    biography: multilineString(payload.biography, "Биография", 6000),
+    note: multilineString(payload.note, "Заметка", 4000),
     status,
-    deathDate: deathDate ? deathDate.value : "",
+    deathDate,
   };
 }
 
 export function parseCreateStoryInput(data: unknown) {
-  if (!data || typeof data !== "object") {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new HttpError(400, "Некорректный payload для создания истории.");
   }
 
@@ -205,9 +250,22 @@ export function parseCreateStoryInput(data: unknown) {
 
   return {
     title: requireString(payload.title, "Заголовок истории", 160),
-    body: requireString(payload.body, "Текст истории", 12000),
+    body: multilineString(payload.body, "Текст истории", 12000, true),
     narrator: optionalString(payload.narrator, "Рассказчик", 160),
   };
+}
+
+export function parseStoryVersionInput(data: unknown): { expectedVersion: number } {
+  const version = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as Record<string, unknown>).expectedVersion : undefined;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) {
+    throw new HttpError(400, "Передайте текущую версию истории.");
+  }
+  return { expectedVersion: version };
+}
+
+export function parseUpdateStoryInput(data: unknown) {
+  return { ...parseCreateStoryInput(data), ...parseStoryVersionInput(data) };
 }
 
 // CSRF defense-in-depth on top of SameSite=Lax cookies: browsers attach an
@@ -218,7 +276,7 @@ export function parseCreateStoryInput(data: unknown) {
 export function assertSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
 
-  if (origin && origin !== new URL(request.url).origin) {
+  if (origin && origin !== getRequestOrigin(request)) {
     throw new HttpError(403, "Запрос отклонен: недопустимый источник запроса.");
   }
 }

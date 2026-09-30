@@ -1,15 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { addPeopleToFamily, type BatchPersonEntry } from "@/lib/family-batch";
 import {
   addPersonToFamily,
   AddPersonInput,
   findDuplicatePersonForUpdate,
   normalizeText,
+  PersonUpdateRequest,
   UpdatePersonInput,
 } from "@/lib/family-logic";
-import { deleteUploadByStoragePath } from "@/lib/media-storage";
+import { HttpError } from "@/lib/http-error";
 import { prisma } from "@/lib/prisma";
-import { AuditAction, Family, FamilyPerson, FamilyRelationship, MediaAssetType } from "@/lib/types";
+import { withSerializableTransaction } from "@/lib/serializable-transaction";
+import { formatParentInferenceWarnings } from "@/lib/family-parent-inference";
+import { normalizeMultilineText } from "@/lib/content-text";
+import { buildPersonTimeline, createPersonTimelineEvents } from "@/lib/person-timeline";
+import { AuditAction, Family, FamilyPerson, FamilyRelationship } from "@/lib/types";
 
 const familyOverviewInclude = {
   memberships: true,
@@ -18,6 +24,7 @@ const familyOverviewInclude = {
     orderBy: [{ birthDate: "asc" }, { firstName: "asc" }],
   },
   relationships: true,
+  parentSuppressions: true,
   auditLogs: {
     take: 12,
     orderBy: {
@@ -43,6 +50,7 @@ const personDetailInclude = {
     },
   },
   mediaAssets: {
+    where: { state: "ready" },
     orderBy: {
       createdAt: "desc",
     },
@@ -70,6 +78,7 @@ type PersonDetailRecord = Prisma.PersonGetPayload<{
 function mapPersonSummary(person: FamilyOverviewRecord["people"][number]): FamilyPerson {
   return {
     id: person.id,
+    version: person.version,
     firstName: person.firstName,
     lastName: person.lastName,
     middleName: person.middleName || undefined,
@@ -100,9 +109,18 @@ function mapPersonSummary(person: FamilyOverviewRecord["people"][number]): Famil
   };
 }
 
-function mapPersonDetail(person: PersonDetailRecord): FamilyPerson {
+function mapStory(story: PersonDetailRecord["stories"][number]) {
+  return {
+    id: story.id, title: story.title, body: story.body,
+    narrator: story.narrator ?? undefined, createdAt: story.createdAt.toISOString(),
+    version: story.version, deletedAt: story.deletedAt?.toISOString(),
+  };
+}
+
+function mapPersonDetail(person: PersonDetailRecord, includeDeletedStories = false): FamilyPerson {
   return {
     id: person.id,
+    version: person.version,
     firstName: person.firstName,
     lastName: person.lastName,
     middleName: person.middleName || undefined,
@@ -114,13 +132,13 @@ function mapPersonDetail(person: PersonDetailRecord): FamilyPerson {
     isArchived: person.isArchived,
     biography: person.biography,
     note: person.note ?? undefined,
-    timeline: person.timelineEvents.map((event) => event.label),
+    timeline: buildPersonTimeline(person, person.timelineEvents),
     media: {
       photos: person.photosCount,
       audio: person.audioCount,
       documents: person.documentsCount,
     },
-    mediaAssets: person.mediaAssets.map((asset) => ({
+    mediaAssets: person.mediaAssets.filter((asset) => asset.state === "ready").map((asset) => ({
       id: asset.id,
       type: asset.type,
       title: asset.title,
@@ -129,13 +147,8 @@ function mapPersonDetail(person: PersonDetailRecord): FamilyPerson {
       size: asset.size,
       createdAt: asset.createdAt.toISOString(),
     })),
-    stories: person.stories.map((story) => ({
-      id: story.id,
-      title: story.title,
-      body: story.body,
-      narrator: story.narrator ?? undefined,
-      createdAt: story.createdAt.toISOString(),
-    })),
+    stories: person.stories.filter((story) => !story.deletedAt).map(mapStory),
+    ...(includeDeletedStories ? { deletedStories: person.stories.filter((story) => story.deletedAt).map(mapStory) } : {}),
     memory: person.memoryTitle
       ? {
           title: person.memoryTitle,
@@ -144,6 +157,17 @@ function mapPersonDetail(person: PersonDetailRecord): FamilyPerson {
           summary: person.memorySummary ?? "",
         }
       : undefined,
+  };
+}
+
+function mapRelationship(relationship: FamilyOverviewRecord["relationships"][number]): FamilyRelationship {
+  return {
+    fromPersonId: relationship.fromPersonId,
+    toPersonId: relationship.toPersonId,
+    type: relationship.type,
+    ...(relationship.id ? { id: relationship.id, version: relationship.version } : {}),
+    ...(relationship.origin ? { origin: relationship.origin } : {}),
+    ...(relationship.sourcePersonId ? { sourcePersonId: relationship.sourcePersonId } : {}),
   };
 }
 
@@ -184,11 +208,9 @@ function mapFamily(record: FamilyOverviewRecord): Family {
           activePersonIds.has(relationship.fromPersonId) &&
           activePersonIds.has(relationship.toPersonId),
       )
-      .map((relationship) => ({
-        fromPersonId: relationship.fromPersonId,
-        toPersonId: relationship.toPersonId,
-        type: relationship.type,
-      })),
+      .map(mapRelationship),
+    recordedRelationships: record.relationships.map(mapRelationship),
+    parentSuppressions: (record.parentSuppressions ?? []).map(({ fromPersonId, toPersonId }) => ({ fromPersonId, toPersonId })),
     auditLog: record.auditLogs.map((entry) => ({
       id: entry.id,
       action: entry.action,
@@ -201,11 +223,11 @@ function mapFamily(record: FamilyOverviewRecord): Family {
   };
 }
 
-function withFocusPersonDetail(family: Family, person: PersonDetailRecord): Family {
+function withFocusPersonDetail(family: Family, person: PersonDetailRecord, includeDeletedStories = false): Family {
   return {
     ...family,
     people: family.people.map((currentPerson) =>
-      currentPerson.id === person.id ? mapPersonDetail(person) : currentPerson,
+      currentPerson.id === person.id ? mapPersonDetail(person, includeDeletedStories) : currentPerson,
     ),
   };
 }
@@ -254,12 +276,12 @@ async function recomputeFamilyStats(
     await Promise.all([
       transaction.person.count({ where: activePersonFilter }),
       transaction.mediaAsset.count({
-        where: { type: "photo", person: activePersonFilter },
+        where: { type: "photo", state: "ready", person: activePersonFilter },
       }),
       transaction.mediaAsset.count({
-        where: { type: "audio", person: activePersonFilter },
+        where: { type: "audio", state: "ready", person: activePersonFilter },
       }),
-      transaction.story.count({ where: { person: activePersonFilter } }),
+      transaction.story.count({ where: { person: activePersonFilter, deletedAt: null } }),
       transaction.familyMembership.count({ where: { familyId } }),
     ]);
 
@@ -289,35 +311,12 @@ async function loadFamilyJournalRecordBySlug(slug: string) {
   });
 }
 
-async function loadPersonDetailById(personId: string) {
+async function loadPersonDetailById(personId: string, includeDeletedStories = false) {
   return prisma.person.findUnique({
     where: { id: personId },
-    include: personDetailInclude,
-  });
-}
-
-// Mutations that touch a single person only need the family id and that
-// person's name/flags, so they use these narrow lookups instead of loading the
-// whole family with every media asset, story and timeline event.
-async function loadFamilyIdBySlug(slug: string) {
-  const family = await prisma.family.findUnique({
-    where: { slug },
-    select: { id: true },
-  });
-
-  return family?.id ?? null;
-}
-
-async function loadPersonInFamily(familyId: string, personId: string) {
-  return prisma.person.findFirst({
-    where: { id: personId, familyId },
-    select: {
-      id: true,
-      firstName: true,
-      middleName: true,
-      lastName: true,
-      isArchived: true,
-    },
+    include: { ...personDetailInclude, stories: { ...personDetailInclude.stories,
+      ...(!includeDeletedStories ? { where: { deletedAt: null } } : {}),
+    } },
   });
 }
 
@@ -340,7 +339,7 @@ function getNewRelationships(
   );
 }
 
-export async function getFamilyBySlug(slug: string, focusPersonId?: string) {
+export async function getFamilyBySlug(slug: string, focusPersonId?: string, options: { includeDeletedStories?: boolean } = {}) {
   const record = await loadFamilyOverviewRecordBySlug(slug);
 
   if (!record) {
@@ -355,13 +354,13 @@ export async function getFamilyBySlug(slug: string, focusPersonId?: string) {
     return family;
   }
 
-  const focusPerson = await loadPersonDetailById(resolvedFocusPersonId);
+  const focusPerson = await loadPersonDetailById(resolvedFocusPersonId, options.includeDeletedStories);
 
   if (!focusPerson) {
     return family;
   }
 
-  return withFocusPersonDetail(family, focusPerson);
+  return withFocusPersonDetail(family, focusPerson, options.includeDeletedStories);
 }
 
 export async function getFamilyJournalBySlug(slug: string) {
@@ -374,518 +373,318 @@ export async function getFamilyJournalBySlug(slug: string) {
   return mapFamily(record);
 }
 
+async function persistCreatedPerson(transaction: Prisma.TransactionClient, familyId: string, person: FamilyPerson) {
+  await transaction.person.create({
+    data: {
+      id: person.id,
+      familyId,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      middleName: person.middleName ?? "",
+      gender: person.gender,
+      birthDate: person.birthDate,
+      deathDate: person.deathDate ?? null,
+      birthPlace: person.birthPlace,
+      status: person.status,
+      isArchived: false,
+      biography: person.biography,
+      note: person.note ?? null,
+      photosCount: person.media.photos,
+      audioCount: person.media.audio,
+      documentsCount: person.media.documents,
+      memoryTitle: person.memory?.title ?? null,
+      memoryNarrator: person.memory?.narrator ?? null,
+      memoryDuration: person.memory?.duration ?? null,
+      memorySummary: person.memory?.summary ?? null,
+      timelineEvents: {
+        create: createPersonTimelineEvents(),
+      },
+    },
+  });
+}
+
+function relationshipWriteData(familyId: string, relationship: FamilyRelationship): Prisma.RelationshipCreateManyInput {
+  return {
+    familyId,
+    fromPersonId: relationship.fromPersonId,
+    toPersonId: relationship.toPersonId,
+    type: relationship.type,
+    ...(relationship.origin && relationship.origin !== "manual"
+      ? { origin: relationship.origin, sourcePersonId: relationship.sourcePersonId }
+      : {}),
+  };
+}
+
+async function auditAutomaticParents(
+  transaction: Prisma.TransactionClient,
+  familyId: string,
+  actorName: string,
+  relationships: FamilyRelationship[],
+  people: FamilyPerson[],
+) {
+  const names = new Map(people.map((person) => [person.id, formatPersonName(person)]));
+  for (const relationship of relationships) {
+    if (relationship.origin !== "spouse" && relationship.origin !== "sibling") continue;
+    const childName = names.get(relationship.toPersonId) ?? "Человек";
+    const parentName = names.get(relationship.fromPersonId) ?? "Человек";
+    const sourceName = relationship.sourcePersonId ? names.get(relationship.sourcePersonId) : undefined;
+    await createAuditLog(transaction, {
+      familyId, action: "person_updated", actorName,
+      personId: relationship.toPersonId, personName: childName,
+      message: `Добавлено автоматически: ${parentName} — родитель для ${childName}. Основание: ${relationship.origin === "spouse" ? "супружество" : "брат / сестра"}${sourceName ? `, ${sourceName}` : ""}.`,
+    });
+  }
+}
+
+export async function createPeopleInFamily(
+  slug: string,
+  entries: BatchPersonEntry[],
+  actorName: string,
+  actorUserId: string,
+): Promise<{ people: FamilyPerson[]; warnings: string[] }> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (transaction) => {
+        const familyRecord = await transaction.family.findUnique({ where: { slug }, include: familyOverviewInclude });
+        if (!familyRecord) throw new HttpError(404, "Семья не найдена.");
+        await requirePersonEditor(transaction, familyRecord.id, actorUserId);
+        const currentFamily = mapFamily(familyRecord);
+        // Preserve archived ancestry for parent-slot validation, like single creation.
+        currentFamily.relationships = familyRecord.relationships.map(mapRelationship);
+        const result = addPeopleToFamily(currentFamily, entries);
+        // The pure planner uses family-local slugs. Persist globally unique IDs
+        // because Person.id is a database-wide primary key, not family-scoped.
+        const ids = new Map(result.people.map((person) => [person.id, randomUUID()]));
+        const people = result.people.map((person) => ({ ...person, id: ids.get(person.id)! }));
+        const newRelationships = getNewRelationships(currentFamily.relationships, result.family.relationships).map((relationship) => ({
+          ...relationship,
+          fromPersonId: ids.get(relationship.fromPersonId) ?? relationship.fromPersonId,
+          toPersonId: ids.get(relationship.toPersonId) ?? relationship.toPersonId,
+          ...(relationship.sourcePersonId ? { sourcePersonId: ids.get(relationship.sourcePersonId) ?? relationship.sourcePersonId } : {}),
+        }));
+
+        // Validate every row before writes; all referenced people exist before edges.
+        for (const person of people) await persistCreatedPerson(transaction, familyRecord.id, person);
+        if (newRelationships.length) {
+          await transaction.relationship.createMany({ data: newRelationships.map((relationship) => relationshipWriteData(familyRecord.id, relationship)) });
+        }
+        await auditAutomaticParents(transaction, familyRecord.id, actorName, newRelationships, [...currentFamily.people, ...(currentFamily.archivedPeople ?? []), ...people]);
+        for (const person of people) {
+          await createAuditLog(transaction, {
+            familyId: familyRecord.id, action: "person_created", actorName,
+            personId: person.id, personName: formatPersonName(person),
+            message: `${actorName} добавил(а) человека "${formatPersonName(person)}" в семейное дерево.`,
+          });
+        }
+        await recomputeFamilyStats(transaction, familyRecord.id);
+        return { people, warnings: formatParentInferenceWarnings(result.warnings, [...result.family.people, ...(result.family.archivedPeople ?? [])]) };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5000, timeout: 20000 });
+    } catch (error) {
+      const conflict = error instanceof Prisma.PrismaClientKnownRequestError && ["P2034", "P2002"].includes(error.code);
+      if (!conflict) throw error;
+      if (attempt === 2) throw new HttpError(409, "Дерево изменилось одновременно с вашим запросом. Попробуйте добавить людей ещё раз.");
+    }
+  }
+  throw new HttpError(409, "Не удалось добавить людей. Попробуйте ещё раз.");
+}
+
 export async function createPersonInFamily(
   slug: string,
   input: AddPersonInput,
-  actorName = "Система",
+  actorName: string,
+  actorUserId: string,
 ) {
-  const familyRecord = await loadFamilyOverviewRecordBySlug(slug);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (transaction) => {
+        // Read and validate the graph in the same transaction as the person and
+        // edges, so concurrent additions cannot both claim a second-parent slot.
+        const familyRecord = await transaction.family.findUnique({
+          where: { slug },
+          include: familyOverviewInclude,
+        });
+        if (!familyRecord) throw new HttpError(404, "Семья не найдена.");
+        await requirePersonEditor(transaction, familyRecord.id, actorUserId);
+        const currentFamily = mapFamily(familyRecord);
+        // Archived relatives are hidden from the tree, not erased from ancestry.
+        currentFamily.relationships = familyRecord.relationships.map(mapRelationship);
+        const result = addPersonToFamily(currentFamily, input);
+        // Planner IDs are family-local slugs; persisted IDs share a global keyspace.
+        const person = { ...result.person, id: randomUUID() };
+        const newRelationships = getNewRelationships(currentFamily.relationships, result.family.relationships).map((relationship) => ({
+          ...relationship,
+          fromPersonId: relationship.fromPersonId === result.person.id ? person.id : relationship.fromPersonId,
+          toPersonId: relationship.toPersonId === result.person.id ? person.id : relationship.toPersonId,
+          ...(relationship.sourcePersonId ? { sourcePersonId: relationship.sourcePersonId === result.person.id ? person.id : relationship.sourcePersonId } : {}),
+        }));
 
-  if (!familyRecord) {
-    throw new Error("Семья не найдена.");
-  }
+        await persistCreatedPerson(transaction, familyRecord.id, person);
 
-  const currentFamily = mapFamily(familyRecord);
-  const result = addPersonToFamily(currentFamily, input);
-  const newRelationships = getNewRelationships(
-    currentFamily.relationships,
-    result.family.relationships,
-  );
+        if (newRelationships.length) {
+          await transaction.relationship.createMany({
+            data: newRelationships.map((relationship) => relationshipWriteData(familyRecord.id, relationship)),
+          });
+        }
 
-  await prisma.$transaction(async (transaction) => {
-    await transaction.person.create({
-      data: {
-        id: result.person.id,
-        familyId: familyRecord.id,
-        firstName: result.person.firstName,
-        lastName: result.person.lastName,
-        middleName: result.person.middleName ?? "",
-        gender: result.person.gender,
-        birthDate: result.person.birthDate,
-        deathDate: result.person.deathDate ?? null,
-        birthPlace: result.person.birthPlace,
-        status: result.person.status,
-        isArchived: false,
-        biography: result.person.biography,
-        note: result.person.note ?? null,
-        photosCount: result.person.media.photos,
-        audioCount: result.person.media.audio,
-        documentsCount: result.person.media.documents,
-        memoryTitle: result.person.memory?.title ?? null,
-        memoryNarrator: result.person.memory?.narrator ?? null,
-        memoryDuration: result.person.memory?.duration ?? null,
-        memorySummary: result.person.memory?.summary ?? null,
-        timelineEvents: {
-          create: result.person.timeline.map((label, index) => ({
-            label,
-            order: index,
-          })),
-        },
-      },
-    });
+        await auditAutomaticParents(transaction, familyRecord.id, actorName, newRelationships, [...currentFamily.people, ...(currentFamily.archivedPeople ?? []), person]);
 
-    if (newRelationships.length) {
-      await transaction.relationship.createMany({
-        data: newRelationships.map((relationship) => ({
+        await recomputeFamilyStats(transaction, familyRecord.id);
+
+        await createAuditLog(transaction, {
           familyId: familyRecord.id,
-          fromPersonId: relationship.fromPersonId,
-          toPersonId: relationship.toPersonId,
-          type: relationship.type,
-        })),
-      });
+          action: "person_created",
+          actorName,
+          personId: person.id,
+          personName: formatPersonName(person),
+          message: `${actorName} добавил(а) человека "${formatPersonName(person)}" в семейное дерево.`,
+        });
+        return { ...person, warnings: formatParentInferenceWarnings(result.warnings, [...result.family.people, ...(result.family.archivedPeople ?? [])]) };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      const conflict = error instanceof Prisma.PrismaClientKnownRequestError && ["P2034", "P2002"].includes(error.code);
+      if (!conflict) throw error;
+      if (attempt === 2) {
+        throw new HttpError(409, "Дерево изменилось одновременно с вашим запросом. Попробуйте добавить человека ещё раз.");
+      }
     }
-
-    await recomputeFamilyStats(transaction, familyRecord.id);
-
-    await createAuditLog(transaction, {
-      familyId: familyRecord.id,
-      action: "person_created",
-      actorName,
-      personId: result.person.id,
-      personName: formatPersonName(result.person),
-      message: `${actorName} добавил(а) человека "${formatPersonName(result.person)}" в семейное дерево.`,
-    });
-  });
-
-  return result.person;
+  }
+  throw new HttpError(409, "Не удалось добавить человека. Попробуйте ещё раз.");
 }
 
 export async function updatePersonInFamily(
   slug: string,
   personId: string,
-  input: UpdatePersonInput,
-  actorName = "Система",
+  input: PersonUpdateRequest,
+  actorName: string,
+  actorUserId: string,
 ) {
-  const familyRecord = await loadFamilyOverviewRecordBySlug(slug);
-
-  if (!familyRecord) {
-    throw new Error("Семья не найдена.");
-  }
-
-  const currentFamily = mapFamily(familyRecord);
-  const currentPerson = currentFamily.people.find((person) => person.id === personId);
-
-  if (!currentPerson) {
-    throw new Error("Человек не найден.");
-  }
-
-  const normalizedInput: UpdatePersonInput = {
-    firstName: normalizeText(input.firstName),
-    lastName: normalizeText(input.lastName),
-    middleName: normalizeText(input.middleName ?? ""),
-    gender: input.gender,
-    birthDate: normalizeText(input.birthDate),
-    birthPlace: normalizeText(input.birthPlace),
-    biography: normalizeText(input.biography),
-    note: normalizeText(input.note ?? ""),
-    status: input.status,
-    deathDate: normalizeText(input.deathDate ?? ""),
-  };
-
-  const duplicate = findDuplicatePersonForUpdate(
-    currentFamily,
-    personId,
-    normalizedInput,
-  );
-
-  if (duplicate) {
-    throw new Error(
-      `Человек "${[
-        duplicate.firstName,
-        duplicate.middleName,
-        duplicate.lastName,
-      ]
-        .filter(Boolean)
-        .join(" ")}" с датой рождения ${duplicate.birthDate} уже есть в этой семье.`,
-    );
-  }
-
-  await prisma.$transaction(async (transaction) => {
-    await transaction.person.update({
-      where: {
-        id: currentPerson.id,
-      },
-      data: {
-        firstName: normalizedInput.firstName,
-        lastName: normalizedInput.lastName,
-        middleName: normalizedInput.middleName || "",
-        gender: normalizedInput.gender,
-        birthDate: normalizedInput.birthDate,
-        birthPlace: normalizedInput.birthPlace,
-        biography: normalizedInput.biography,
-        note: normalizedInput.note || null,
-        status: normalizedInput.status,
-        deathDate:
-          normalizedInput.status === "deceased" && normalizedInput.deathDate
-            ? normalizedInput.deathDate
-            : null,
-      },
-    });
-
-    await createAuditLog(transaction, {
-      familyId: familyRecord.id,
-      action: "person_updated",
-      actorName,
-      personId: currentPerson.id,
-      personName: formatPersonName(currentPerson),
-      message: `${actorName} обновил(а) карточку человека "${formatPersonName(currentPerson)}".`,
-    });
-  });
-
-  return {
-    ...currentPerson,
-    firstName: normalizedInput.firstName,
-    lastName: normalizedInput.lastName,
-    middleName: normalizedInput.middleName || undefined,
-    gender: normalizedInput.gender,
-    birthDate: normalizedInput.birthDate,
-    birthPlace: normalizedInput.birthPlace,
-    biography: normalizedInput.biography,
-    note: normalizedInput.note || undefined,
-    status: normalizedInput.status,
-    isArchived: currentPerson.isArchived,
-    deathDate:
-      normalizedInput.status === "deceased" && normalizedInput.deathDate
-        ? normalizedInput.deathDate
-        : undefined,
-    mediaAssets: currentPerson.mediaAssets,
-    stories: currentPerson.stories,
-  };
-}
-
-export async function createStoryForPerson(params: {
-  slug: string;
-  personId: string;
-  title: string;
-  body: string;
-  narrator?: string;
-  actorName?: string;
-}) {
-  const {
-    slug,
-    personId,
-    title,
-    body,
-    narrator,
-    actorName = "Система",
-  } = params;
-  const familyId = await loadFamilyIdBySlug(slug);
-
-  if (!familyId) {
-    throw new Error("Семья не найдена.");
-  }
-
-  const person = await loadPersonInFamily(familyId, personId);
-
-  if (!person) {
-    throw new Error("Человек не найден.");
-  }
-
-  const story = await prisma.$transaction(async (transaction) => {
-    const createdStory = await transaction.story.create({
-      data: {
-        personId,
-        title: normalizeText(title),
-        body: normalizeText(body),
-        narrator: normalizeText(narrator ?? "") || null,
-      },
-    });
-
-    await recomputeFamilyStats(transaction, familyId);
-
-    await createAuditLog(transaction, {
-      familyId,
-      action: "story_added",
-      actorName,
-      personId,
-      personName: formatPersonName(person),
-      message: `${actorName} добавил(а) историю "${normalizeText(title)}" в карточку "${formatPersonName(person)}".`,
-    });
-
-    return createdStory;
-  });
-
-  return {
-    id: story.id,
-    title: story.title,
-    body: story.body,
-    narrator: story.narrator ?? undefined,
-    createdAt: story.createdAt.toISOString(),
-  };
-}
-
-export async function createMediaAssetForPerson(params: {
-  slug: string;
-  personId: string;
-  type: MediaAssetType;
-  title: string;
-  storagePath: string;
-  mimeType: string;
-  size: number;
-  actorName?: string;
-}) {
-  const { slug, personId, type, title, storagePath, mimeType, size, actorName = "Система" } =
-    params;
-  const familyId = await loadFamilyIdBySlug(slug);
-
-  if (!familyId) {
-    throw new Error("Семья не найдена.");
-  }
-
-  const person = await loadPersonInFamily(familyId, personId);
-
-  if (!person) {
-    throw new Error("Человек не найден.");
-  }
-
-  const asset = await prisma.$transaction(async (transaction) => {
-    const createdAssetId = randomUUID();
-    const createdAsset = await transaction.mediaAsset.create({
-      data: {
-        id: createdAssetId,
-        personId,
-        type,
-        title: normalizeText(title) || `${type}-${Date.now()}`,
-        storagePath,
-        mimeType,
-        size,
-      },
-    });
-
-    await transaction.person.update({
-      where: { id: personId },
-      data:
-        type === "photo"
-          ? {
-              photosCount: {
-                increment: 1,
-              },
-            }
-          : {
-              audioCount: {
-                increment: 1,
-              },
-            },
-    });
-
-    await recomputeFamilyStats(transaction, familyId);
-
-    await createAuditLog(transaction, {
-      familyId,
-      action: "media_added",
-      actorName,
-      personId,
-      personName: formatPersonName(person),
-      message: `${actorName} добавил(а) ${type === "photo" ? "фото" : "аудио"} в карточку "${formatPersonName(person)}".`,
-    });
-
-    return createdAsset;
-  });
-
-  return {
-    id: asset.id,
-    type: asset.type,
-    title: asset.title,
-    url: buildPrivateMediaUrl(slug, personId, asset.id),
-    mimeType: asset.mimeType,
-    size: asset.size,
-    createdAt: asset.createdAt.toISOString(),
-  };
-}
-
-export async function deleteMediaAssetFromPerson(params: {
-  slug: string;
-  personId: string;
-  assetId: string;
-  actorName?: string;
-}) {
-  const { slug, personId, assetId, actorName = "Система" } = params;
-  const familyId = await loadFamilyIdBySlug(slug);
-
-  if (!familyId) {
-    throw new Error("Семья не найдена.");
-  }
-
-  const person = await loadPersonInFamily(familyId, personId);
-
-  if (!person) {
-    throw new Error("Человек не найден.");
-  }
-
-  const asset = await prisma.mediaAsset.findFirst({
-    where: { id: assetId, personId },
-  });
-
-  if (!asset) {
-    throw new Error("Медиафайл не найден.");
-  }
-
-  await prisma.$transaction(async (transaction) => {
-    await transaction.mediaAsset.delete({
-      where: {
-        id: asset.id,
-      },
-    });
-
-    await transaction.person.update({
-      where: { id: personId },
-      data:
-        asset.type === "photo"
-          ? {
-              photosCount: {
-                decrement: 1,
-              },
-            }
-          : {
-              audioCount: {
-                decrement: 1,
-              },
-            },
-    });
-
-    await recomputeFamilyStats(transaction, familyId);
-
-    await createAuditLog(transaction, {
-      familyId,
-      action: "media_deleted",
-      actorName,
-      personId,
-      personName: formatPersonName(person),
-      message: `${actorName} удалил(а) ${asset.type === "photo" ? "фото" : "аудио"} из карточки "${formatPersonName(person)}".`,
-    });
-  });
-
-  await deleteUploadByStoragePath(asset.storagePath);
-
-  return asset;
-}
-
-export async function getMediaAssetForFamily(params: {
-  slug: string;
-  personId: string;
-  assetId: string;
-}) {
-  const asset = await prisma.mediaAsset.findFirst({
-    where: {
-      id: params.assetId,
-      personId: params.personId,
-      person: {
-        family: {
-          slug: params.slug,
+  try {
+    return await withSerializableTransaction(async (transaction) => {
+      const familyRecord = await transaction.family.findUnique({ where: { slug }, include: familyOverviewInclude });
+      if (!familyRecord) throw new HttpError(404, "Семья не найдена.");
+      await requirePersonEditor(transaction, familyRecord.id, actorUserId);
+      const currentFamily = mapFamily(familyRecord);
+      const currentPerson = currentFamily.people.find((person) => person.id === personId);
+      if (!currentPerson) throw new HttpError(404, "Человек не найден.");
+      if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+        throw new HttpError(400, "Нужна версия редактируемой карточки. Откройте её заново.");
+      }
+      if (currentPerson.version !== input.expectedVersion) {
+        throw new HttpError(409, "Карточка уже изменена другим пользователем. Ваши данные остались в форме. Откройте актуальную карточку перед повторным сохранением.");
+      }
+      const normalizedInput: UpdatePersonInput = {
+        firstName: normalizeText(input.firstName), lastName: normalizeText(input.lastName),
+        middleName: normalizeText(input.middleName ?? ""), gender: input.gender,
+        birthDate: normalizeText(input.birthDate), birthPlace: normalizeText(input.birthPlace),
+        biography: normalizeMultilineText(input.biography), note: normalizeMultilineText(input.note ?? ""),
+        status: input.status, deathDate: normalizeText(input.deathDate ?? ""),
+      };
+      const duplicate = findDuplicatePersonForUpdate(currentFamily, personId, normalizedInput);
+      if (duplicate) {
+        throw new HttpError(409, `Человек "${formatPersonName(duplicate)}" с датой рождения ${duplicate.birthDate} уже есть в этой семье.`);
+      }
+      const updated = await transaction.person.update({
+        where: { id: personId, familyId: familyRecord.id, isArchived: false, version: input.expectedVersion },
+        data: {
+          ...normalizedInput,
+          middleName: normalizedInput.middleName || "",
+          note: normalizedInput.note || null,
+          deathDate: normalizedInput.status === "deceased" && normalizedInput.deathDate ? normalizedInput.deathDate : null,
+          version: { increment: 1 },
         },
-      },
-    },
-    select: {
-      id: true,
-      title: true,
-      mimeType: true,
-      size: true,
-      storagePath: true,
-      type: true,
-    },
-  });
-
-  if (!asset) {
-    throw new Error("Медиафайл не найден.");
+      });
+      await createAuditLog(transaction, {
+        familyId: familyRecord.id, action: "person_updated", actorName, personId,
+        personName: formatPersonName(currentPerson),
+        message: `${actorName} обновил(а) карточку человека "${formatPersonName(currentPerson)}".`,
+      });
+      return mapPersonSummary(updated);
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") throw new HttpError(409, "Карточка изменилась во время сохранения. Ваши данные остались в форме.");
+      if (error.code === "P2002") throw new HttpError(409, "Человек с таким именем и датой рождения уже есть в этой семье.");
+    }
+    throw error;
   }
-
-  return asset;
 }
+
+export { createStoryForPerson } from "@/lib/family-story-repository";
+
+export { deleteMediaAssetFromPerson, getMediaAssetForFamily } from "@/lib/family-media-repository";
 
 export async function archivePersonInFamily(params: {
   slug: string;
   personId: string;
+  actorUserId: string;
   actorName?: string;
 }) {
-  const { slug, personId, actorName = "Система" } = params;
-  const familyId = await loadFamilyIdBySlug(slug);
-
-  if (!familyId) {
-    throw new Error("Семья не найдена.");
-  }
-
-  const person = await loadPersonInFamily(familyId, personId);
-
-  if (!person) {
-    throw new Error("Человек не найден.");
-  }
-
-  if (person.isArchived) {
-    throw new Error("Этот человек уже находится в архиве.");
-  }
-
-  const activePeopleCount = await prisma.person.count({
-    where: { familyId, isArchived: false },
-  });
-
-  if (activePeopleCount <= 1) {
-    throw new Error("Нельзя архивировать последнего активного человека в семье.");
-  }
-
-  await prisma.$transaction(async (transaction) => {
-    await transaction.person.update({
-      where: { id: personId },
-      data: {
-        isArchived: true,
-      },
-    });
-
-    await recomputeFamilyStats(transaction, familyId);
-
-    await createAuditLog(transaction, {
-      familyId,
-      action: "person_archived",
-      actorName,
-      personId,
-      personName: formatPersonName(person),
-      message: `${actorName} перенес(ла) "${formatPersonName(person)}" в архив семьи.`,
-    });
-  });
-
-  return person.id;
+  return setPersonArchiveState(params, true);
 }
 
 export async function restorePersonInFamily(params: {
   slug: string;
   personId: string;
+  actorUserId: string;
   actorName?: string;
 }) {
-  const { slug, personId, actorName = "Система" } = params;
-  const familyId = await loadFamilyIdBySlug(slug);
+  return setPersonArchiveState(params, false);
+}
 
-  if (!familyId) {
-    throw new Error("Семья не найдена.");
+async function requirePersonEditor(transaction: Prisma.TransactionClient, familyId: string, actorUserId: string) {
+  // The route's role check is only an early rejection; permissions can change
+  // before this transaction starts or while a failed attempt is being retried.
+  if (!actorUserId) throw new HttpError(403, "Недостаточно прав для этого действия.");
+  const membership = await transaction.familyMembership.findFirst({
+    where: { familyId, userId: actorUserId },
+    select: { role: true },
+  });
+  if (!membership || !["owner", "admin", "editor"].includes(membership.role)) {
+    throw new HttpError(403, "Недостаточно прав для этого действия.");
   }
+}
 
-  const person = await loadPersonInFamily(familyId, personId);
+async function setPersonArchiveState(
+  { slug, personId, actorUserId, actorName = "Система" }: {
+    slug: string; personId: string; actorUserId: string; actorName?: string;
+  },
+  isArchived: boolean,
+) {
+  return withSerializableTransaction(async (transaction) => {
+    const family = await transaction.family.findUnique({ where: { slug }, select: { id: true } });
+    if (!family) throw new HttpError(404, "Семья не найдена.");
+    const familyId = family.id;
+    await requirePersonEditor(transaction, familyId, actorUserId);
+    const person = await transaction.person.findFirst({
+      where: { id: personId, familyId },
+      select: { id: true, firstName: true, middleName: true, lastName: true, isArchived: true },
+    });
+    if (!person) throw new HttpError(404, "Человек не найден.");
+    if (person.isArchived === isArchived) {
+      throw new HttpError(409, isArchived
+        ? "Этот человек уже находится в архиве."
+        : "Этот человек уже находится в активном дереве.");
+    }
 
-  if (!person) {
-    throw new Error("Человек не найден.");
-  }
+    if (isArchived && await transaction.person.count({ where: { familyId, isArchived: false } }) <= 1) {
+      throw new HttpError(409, "Нельзя архивировать последнего активного человека в семье.");
+    }
 
-  if (!person.isArchived) {
-    throw new Error("Этот человек уже находится в активном дереве.");
-  }
-
-  await prisma.$transaction(async (transaction) => {
     await transaction.person.update({
       where: { id: personId },
-      data: {
-        isArchived: false,
-      },
+      data: { isArchived, version: { increment: 1 } },
     });
-
     await recomputeFamilyStats(transaction, familyId);
-
     await createAuditLog(transaction, {
       familyId,
-      action: "person_restored",
+      action: isArchived ? "person_archived" : "person_restored",
       actorName,
       personId,
       personName: formatPersonName(person),
-      message: `${actorName} восстановил(а) "${formatPersonName(person)}" из архива.`,
+      message: isArchived
+        ? `${actorName} перенес(ла) "${formatPersonName(person)}" в архив семьи.`
+        : `${actorName} восстановил(а) "${formatPersonName(person)}" из архива.`,
     });
+    return person.id;
   });
-
-  return person.id;
 }

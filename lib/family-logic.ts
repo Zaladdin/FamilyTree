@@ -1,7 +1,20 @@
-import { Family, FamilyPerson, FamilyRelationship, Gender } from "@/lib/types";
+import { Family, FamilyPerson, Gender } from "@/lib/types";
 import { slugify } from "@/lib/slug";
+import { addRelationshipToFamily, parseAddExistingRelationshipInput } from "@/lib/family-relationships";
+import { HttpError } from "@/lib/http-error";
+import { applyAutomaticParenthood, type ParentInferenceWarning } from "@/lib/family-parent-inference";
+import { normalizeMultilineText } from "@/lib/content-text";
+import { buildPersonTimeline, createPersonTimelineEvents } from "@/lib/person-timeline";
 
 export type AddRelationshipKind = "parent" | "child" | "spouse" | "sibling";
+
+export type PersonRelationshipInput = {
+  relationshipKind: AddRelationshipKind;
+  relativePersonId: string;
+  relativeClientId?: string;
+};
+
+export const MAX_ADDITIONAL_RELATIONSHIPS = 9;
 
 export type AddPersonInput = {
   firstName: string;
@@ -11,8 +24,12 @@ export type AddPersonInput = {
   birthDate: string;
   birthPlace: string;
   biography?: string;
+  status?: FamilyPerson["status"];
+  deathDate?: string;
   relationshipKind: AddRelationshipKind;
   relativePersonId: string;
+  sharedChildIds?: string[];
+  additionalRelationships?: PersonRelationshipInput[];
 };
 
 export type UpdatePersonInput = {
@@ -26,6 +43,10 @@ export type UpdatePersonInput = {
   note?: string;
   status: FamilyPerson["status"];
   deathDate?: string;
+};
+
+export type PersonUpdateRequest = UpdatePersonInput & {
+  expectedVersion: number;
 };
 
 export function normalizeText(value: string) {
@@ -89,29 +110,6 @@ export function findDuplicatePersonForUpdate(
   );
 }
 
-function hasRelationship(
-  relationships: FamilyRelationship[],
-  nextRelationship: FamilyRelationship,
-) {
-  return relationships.some(
-    (relationship) =>
-      relationship.type === nextRelationship.type &&
-      relationship.fromPersonId === nextRelationship.fromPersonId &&
-      relationship.toPersonId === nextRelationship.toPersonId,
-  );
-}
-
-function ensureRelationship(
-  relationships: FamilyRelationship[],
-  nextRelationship: FamilyRelationship,
-) {
-  if (hasRelationship(relationships, nextRelationship)) {
-    return relationships;
-  }
-
-  return [...relationships, nextRelationship];
-}
-
 function getParents(family: Family, personId: string) {
   return family.relationships
     .filter(
@@ -121,28 +119,25 @@ function getParents(family: Family, personId: string) {
     .map((relationship) => relationship.fromPersonId);
 }
 
-function getSpouses(family: Family, personId: string) {
-  return family.relationships
-    .filter(
-      (relationship) =>
-        relationship.type === "spouse" &&
-        (relationship.fromPersonId === personId || relationship.toPersonId === personId),
-    )
-    .map((relationship) =>
-      relationship.fromPersonId === personId
-        ? relationship.toPersonId
-        : relationship.fromPersonId,
-    );
+/** Candidates for legacy clients that explicitly select shared children. */
+export function getSharedChildrenCandidates(family: Family, relativePersonId: string) {
+  const childIds = new Set(family.relationships
+    .filter((relationship) => relationship.type === "parent" && relationship.fromPersonId === relativePersonId)
+    .map((relationship) => relationship.toPersonId));
+  return family.people.filter((person) =>
+    !person.isArchived && childIds.has(person.id) && new Set(getParents(family, person.id)).size < 2,
+  );
 }
 
 export function addPersonToFamily(
   family: Family,
   input: AddPersonInput,
-): { family: Family; person: FamilyPerson } {
+  options: { deferInference?: boolean } = {},
+): { family: Family; person: FamilyPerson; warnings: ParentInferenceWarning[] } {
   const duplicate = findDuplicatePerson(family, input);
 
   if (duplicate) {
-    throw new Error(
+    throw new HttpError(400,
       `Человек "${[duplicate.firstName, duplicate.middleName, duplicate.lastName]
         .filter(Boolean)
         .join(" ")}" с датой рождения ${duplicate.birthDate} уже есть в этой семье.`,
@@ -153,10 +148,44 @@ export function addPersonToFamily(
   const isFirstPerson = family.people.length === 0;
   const relativePerson = isFirstPerson
     ? undefined
-    : family.people.find((person) => person.id === input.relativePersonId);
+    : family.people.find((person) => !person.isArchived && person.id === input.relativePersonId);
 
   if (!isFirstPerson && !relativePerson) {
-    throw new Error("Не удалось найти выбранного родственника для связи.");
+    throw new HttpError(400, "Не удалось найти выбранного родственника для связи.");
+  }
+  const additionalRelationships = input.additionalRelationships === undefined ? [] : input.additionalRelationships;
+  if (!Array.isArray(additionalRelationships) || additionalRelationships.length > MAX_ADDITIONAL_RELATIONSHIPS) {
+    throw new HttpError(400, `Можно указать не более ${MAX_ADDITIONAL_RELATIONSHIPS + 1} связей для одного человека.`);
+  }
+  if (isFirstPerson && (input.relativePersonId || additionalRelationships.length)) {
+    throw new HttpError(400, "Первый человек в пустом дереве добавляется без родственника.");
+  }
+  const explicitLinks: PersonRelationshipInput[] = relativePerson ? [{
+    relationshipKind: input.relationshipKind, relativePersonId: relativePerson.id,
+  }, ...additionalRelationships] : [];
+  const seenLinks = new Set<string>();
+  for (const link of explicitLinks) {
+    const parsed = parseAddExistingRelationshipInput(link);
+    if (link.relativeClientId) throw new HttpError(400, "Сначала разрешите связь с карточкой списка.");
+    const key = `${parsed.relationshipKind}:${parsed.relativePersonId}`;
+    if (seenLinks.has(key)) throw new HttpError(400, "Одна и та же родственная связь указана несколько раз.");
+    seenLinks.add(key);
+  }
+
+  const requestedChildren = input.sharedChildIds === undefined ? [] : input.sharedChildIds;
+  if (!Array.isArray(requestedChildren) || requestedChildren.length > 100 ||
+    requestedChildren.some((id) => typeof id !== "string" || !id.trim() || id.trim().length > 120)) {
+    throw new HttpError(400, "Некорректный список общих детей.");
+  }
+  const sharedChildIds = [...new Set(requestedChildren.map((id) => id.trim()))];
+  if (sharedChildIds.length) {
+    if (!relativePerson || input.relationshipKind !== "spouse") {
+      throw new HttpError(400, "Общих детей можно указать только при добавлении супруга или супруги.");
+    }
+    const candidates = new Set(getSharedChildrenCandidates(family, relativePerson.id).map((child) => child.id));
+    if (sharedChildIds.some((id) => !candidates.has(id))) {
+      throw new HttpError(400, "Выберите существующих детей указанного родственника, у которых ещё не указаны двое родителей.");
+    }
   }
 
   const normalizedInput: AddPersonInput = {
@@ -166,7 +195,7 @@ export function addPersonToFamily(
     middleName: normalizeText(input.middleName ?? ""),
     birthDate: normalizeText(input.birthDate),
     birthPlace: normalizeText(input.birthPlace),
-    biography: normalizeText(input.biography ?? ""),
+    biography: normalizeMultilineText(input.biography ?? ""),
   };
 
   const nextPerson: FamilyPerson = {
@@ -177,84 +206,33 @@ export function addPersonToFamily(
     gender: normalizedInput.gender,
     birthDate: normalizedInput.birthDate,
     birthPlace: normalizedInput.birthPlace,
-    status: "living",
+    status: normalizedInput.status ?? "living",
+    deathDate: normalizedInput.status === "deceased"
+      ? normalizeText(normalizedInput.deathDate ?? "") || undefined
+      : undefined,
     isArchived: false,
     biography:
       normalizedInput.biography ||
       `${personDisplayNameForTimeline(normalizedInput)} добавлен(а) в семейное дерево. Биография будет заполнена позже.`,
     note: "Карточка создана в MVP через форму добавления человека.",
-    timeline: [
-      `${normalizedInput.birthDate} - рождение`,
-      `${new Date().getFullYear()} - добавлен(а) в цифровое дерево семьи`,
-    ],
+    timeline: buildPersonTimeline({ ...normalizedInput, status: normalizedInput.status ?? "living" }, createPersonTimelineEvents()),
     media: { photos: 0, audio: 0, documents: 0 },
     mediaAssets: [],
     stories: [],
   };
 
-  let nextRelationships = [...family.relationships];
-
-  if (relativePerson) {
-    if (normalizedInput.relationshipKind === "spouse") {
-      nextRelationships = ensureRelationship(nextRelationships, {
-        type: "spouse",
-        fromPersonId: relativePerson.id,
-        toPersonId: nextPerson.id,
-      });
-    }
-
-    if (normalizedInput.relationshipKind === "child") {
-      nextRelationships = ensureRelationship(nextRelationships, {
-        type: "parent",
-        fromPersonId: relativePerson.id,
-        toPersonId: nextPerson.id,
-      });
-
-      const spouses = getSpouses(family, relativePerson.id);
-
-      if (spouses.length === 1) {
-        nextRelationships = ensureRelationship(nextRelationships, {
-          type: "parent",
-          fromPersonId: spouses[0],
-          toPersonId: nextPerson.id,
-        });
-      }
-    }
-
-    if (normalizedInput.relationshipKind === "parent") {
-      if (getParents(family, relativePerson.id).length >= 2) {
-        throw new Error(
-          "У выбранного человека уже указаны двое родителей. Сначала измените существующие связи.",
-        );
-      }
-
-      nextRelationships = ensureRelationship(nextRelationships, {
-        type: "parent",
-        fromPersonId: nextPerson.id,
-        toPersonId: relativePerson.id,
-      });
-    }
-
-    if (normalizedInput.relationshipKind === "sibling") {
-      const parents = getParents(family, relativePerson.id);
-
-      if (!parents.length) {
-        throw new Error(
-          "Нельзя добавить брата или сестру без известных родителей выбранного человека. Сначала укажите родителя.",
-        );
-      }
-
-      nextRelationships = parents.reduce(
-        (relationships, parentId) =>
-          ensureRelationship(relationships, {
-            type: "parent",
-            fromPersonId: parentId,
-            toPersonId: nextPerson.id,
-          }),
-        nextRelationships,
-      );
-    }
+  let stagedFamily = { ...family, people: [...family.people, nextPerson] };
+  for (const link of explicitLinks) {
+    // Keep the historical spouse orientation and stage all explicit links first.
+    stagedFamily = link.relationshipKind === "spouse"
+      ? addRelationshipToFamily(stagedFamily, link.relativePersonId, { relationshipKind: "spouse", relativePersonId: nextPerson.id }).family
+      : addRelationshipToFamily(stagedFamily, nextPerson.id, link).family;
   }
+  for (const childId of sharedChildIds) {
+    stagedFamily = addRelationshipToFamily(stagedFamily, nextPerson.id, { relationshipKind: "parent", relativePersonId: childId }).family;
+  }
+  const inferred = options.deferInference ? { family: stagedFamily, warnings: [] }
+    : applyAutomaticParenthood(stagedFamily, stagedFamily.relationships.slice(family.relationships.length));
 
   const nextFamily: Family = {
     ...family,
@@ -264,9 +242,9 @@ export function addPersonToFamily(
     },
     people: [...family.people, nextPerson],
     archivedPeople: family.archivedPeople,
-    relationships: nextRelationships,
+    relationships: inferred.family.relationships,
     auditLog: family.auditLog,
   };
 
-  return { family: nextFamily, person: nextPerson };
+  return { family: nextFamily, person: nextPerson, warnings: inferred.warnings };
 }

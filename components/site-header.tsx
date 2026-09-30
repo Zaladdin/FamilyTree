@@ -10,27 +10,33 @@ export async function SiteHeader({ compact = false }: SiteHeaderProps) {
 
   return (
     <header className={`site-header${compact ? " compact" : ""}`}>
-      <Link className="brand" href="/">
-        <span className="brand-mark">R</span>
+      <Link aria-label="Rodovo — на главную" className="brand" href="/">
+        <svg aria-hidden="true" className="brand-mark" viewBox="0 0 38 44" fill="none">
+          <path d="M19 40V24M19 24C19 17 7 19 7 10M19 24C19 17 31 19 31 10M19 24V8" />
+          <circle cx="7" cy="7" r="3" />
+          <circle cx="19" cy="5" r="3" />
+          <circle cx="31" cy="7" r="3" />
+          <path d="M13 40H25" />
+        </svg>
         <span>
           <strong>Rodovo</strong>
           <small>семейный архив</small>
         </span>
       </Link>
 
-      <nav className="top-nav">
+      <nav aria-label="Основная навигация" className="top-nav">
         {!compact && (
           <>
-            <a href="#features">Возможности</a>
-            <Link href="/family/akhmedov?person=timur">Демо-семья</Link>
+            <Link className="header-explore" href="/#features">Возможности</Link>
+            <Link className="header-explore" href="/demo">Посмотреть пример</Link>
           </>
         )}
         {currentUser ? (
           <>
             <Link href="/families">Мои семьи</Link>
-            <span className="header-user">
-              {currentUser.firstName} {currentUser.lastName}
-            </span>
+            <Link className="header-account" href="/account">
+              Аккаунт: {currentUser.firstName}
+            </Link>
             <form action="/api/auth/logout" method="post">
               <button className="ghost-button" type="submit">
                 Выйти
@@ -43,7 +49,7 @@ export async function SiteHeader({ compact = false }: SiteHeaderProps) {
               Войти
             </Link>
             <Link className="accent-button" href="/register">
-              Регистрация
+              Начать историю
             </Link>
           </>
         )}

@@ -1,4 +1,5 @@
 import { HttpError } from "@/lib/http-error";
+import { setRedisHealth } from "@/lib/observability";
 
 type Bucket = {
   count: number;
@@ -67,8 +68,20 @@ function getRedisClient(): Promise<unknown> | null {
     ) => Promise<{ default?: unknown }>;
 
     redisClientPromise = importDynamic("ioredis").then((mod) => {
-      const RedisCtor = (mod.default ?? mod) as new (connection: string) => unknown;
-      return new RedisCtor(url);
+      const RedisCtor = (mod.default ?? mod) as new (connection: string, options: Record<string, unknown>) => {
+        on(event: string, listener: () => void): void;
+      };
+      const client = new RedisCtor(url, {
+        connectTimeout: 1000, commandTimeout: 1500, maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        retryStrategy: (attempt: number) => Math.min(attempt * 500, 5000),
+      });
+      // ioredis otherwise prints its unhandled error (which may contain connection details).
+      client.on("error", () => setRedisHealth("degraded"));
+      return client;
+    }).catch((error: unknown) => {
+      redisClientPromise = null;
+      throw error;
     });
   }
 
@@ -122,17 +135,35 @@ export async function enforceRateLimit({
     try {
       const client = (await redis) as Parameters<typeof hitRedis>[0];
       result = await hitRedis(client, key, limit, windowMs);
+      setRedisHealth("healthy");
     } catch {
+      setRedisHealth("degraded");
       // If Redis is unreachable, fall back to in-memory rather than locking users out.
       result = hitInMemory(key, limit, windowMs);
     }
   } else {
+    setRedisHealth("disabled");
     result = hitInMemory(key, limit, windowMs);
   }
 
   if (!result.allowed) {
     const retryAfterSeconds = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
     throw new HttpError(429, `${message} (через ${retryAfterSeconds} с)`);
+  }
+}
+
+/** Bounded optional dependency check; no URL, key or connector error leaves this module. */
+export async function probeRedisHealth(): Promise<"disabled" | "healthy" | "degraded"> {
+  const redis = getRedisClient();
+  if (!redis) { setRedisHealth("disabled"); return "disabled"; }
+  try {
+    const client = await redis as { ping(): Promise<string> };
+    if (await client.ping() !== "PONG") throw new Error("Redis health check failed.");
+    setRedisHealth("healthy");
+    return "healthy";
+  } catch {
+    setRedisHealth("degraded");
+    return "degraded";
   }
 }
 

@@ -1,48 +1,36 @@
-const previewMembers = [
-  { name: "Магомед", years: "1932-2004", className: "node-top-left" },
-  { name: "Залиха", years: "1938-2011", className: "node-top-right" },
-  { name: "Ахмед", years: "1964-", className: "node-center-left" },
-  { name: "Амина", years: "1967-", className: "node-center-right" },
-  { name: "Тимур", years: "1991-", className: "node-bottom-left" },
-  { name: "Лейла", years: "2026-", className: "node-bottom-right" },
-];
+import Image from "next/image";
 
 export function HeroTree() {
   return (
-    <section className="hero-visual" aria-label="Предпросмотр дерева семьи">
-      <div className="auth-card">
-        <div className="eyebrow">Вход в семью</div>
-        <h2>Семья Ахмедовых</h2>
-        <p>Войдите в архив рода, чтобы добавить фото, истории и новые ветви.</p>
-        <div className="auth-fields">
-          <div>email@example.com</div>
-          <div>Пароль</div>
-        </div>
+    <div className="landing-archive" aria-label="Иллюстрация семейного архива">
+      <div className="landing-archive-backpage" aria-hidden="true">
+        <span>Семейная книга</span>
+        <span>Лица. Имена. Воспоминания.</span>
       </div>
-
-      <div className="tree-preview">
-        <div className="tree-lines tree-line-vertical" />
-        <div className="tree-lines tree-line-horizontal" />
-        {previewMembers.map((member) => (
-          <article className={`tree-node ${member.className}`} key={member.name}>
-            <strong>{member.name}</strong>
-            <span>{member.years}</span>
-          </article>
-        ))}
-      </div>
-
-      <article className="memory-card">
-        <div className="eyebrow">Голос памяти</div>
-        <h3>История прадеда Магомеда</h3>
-        <p>
-          Когда открывают карточку человека, можно услышать рассказ семьи о его
-          жизни, характере и событиях того времени.
-        </p>
-        <div className="audio-bar">
-          <span className="audio-dot" />
-          <span>00:42 / 03:18</span>
+      <figure className="landing-photo">
+        <div className="landing-photo-image">
+          <Image
+            src="/images/family-memory.png"
+            alt="Художественная иллюстрация: несколько поколений семьи на старой чёрно-белой фотографии"
+            fill
+            priority
+            sizes="(max-width: 760px) 82vw, (max-width: 1100px) 43vw, 490px"
+          />
         </div>
-      </article>
-    </section>
+        <figcaption>
+          <span>Одна семья. Целый мир.</span>
+          <span className="landing-photo-index">№ 001</span>
+        </figcaption>
+      </figure>
+      <svg className="landing-family-thread" viewBox="0 0 590 600" fill="none" aria-hidden="true">
+        <path d="M566-15c-78 5-77 122-14 94C624 46 523 17 494 92c-21 55 48 123 38 219-8 86-127 87-221 113-88 24-39 89 31 56s-29-76-134-3C153 514 102 577-22 562" />
+      </svg>
+      <div className="landing-archive-note">
+        <span className="landing-note-pin" aria-hidden="true" />
+        <p>Мы — продолжение<br />тех, кого помним.</p>
+        <span>Сохраните свою нить</span>
+      </div>
+      <span className="landing-image-disclaimer">Образ семейной памяти · иллюстрация</span>
+    </div>
   );
 }

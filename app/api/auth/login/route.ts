@@ -1,3 +1,4 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
 import {
   authenticateUser,
@@ -5,19 +6,28 @@ import {
   normalizeSafeRedirectPath,
   setSessionCookie,
 } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
+import { authErrorMessage } from "@/lib/auth-error";
 import {
   assertSameOrigin,
   parseAuthFormField,
   parseAuthPassword,
 } from "@/lib/request-validation";
 import { enforceRateLimit, getClientIp } from "@/lib/rate-limit";
+import { getRequestOrigin } from "@/lib/request-origin";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
+  let redirectTo = "/families";
+
   try {
     assertSameOrigin(request);
 
     const formData = await request.formData();
+    redirectTo = normalizeSafeRedirectPath(
+      typeof formData.get("redirectTo") === "string"
+        ? String(formData.get("redirectTo"))
+        : null,
+      "/families",
+    );
     const email = parseAuthFormField(formData.get("email"), "Email");
     const password = parseAuthPassword(formData.get("password"));
 
@@ -40,27 +50,17 @@ export async function POST(request: Request) {
       windowMs: 5 * 60 * 1000,
       message: "Слишком много попыток входа.",
     });
-    const redirectTo = normalizeSafeRedirectPath(
-      typeof formData.get("redirectTo") === "string"
-        ? String(formData.get("redirectTo"))
-        : null,
-      "/families",
-    );
-
     const user = await authenticateUser(email, password);
-    const session = await createSession(user.id);
+    const session = await createSession(user.id, user.sessionVersion);
     await setSessionCookie(session.token, session.expiresAt);
 
-    return NextResponse.redirect(new URL(redirectTo, request.url), 303);
+    return NextResponse.redirect(new URL(redirectTo, getRequestOrigin(request)), 303);
   } catch (error) {
-    const message =
-      error instanceof HttpError || error instanceof Error
-        ? error.message
-        : "Не удалось выполнить вход.";
+    const message = authErrorMessage(error, "Не удалось выполнить вход. Попробуйте позже.");
 
-    return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(message)}`, request.url),
-      303,
-    );
+    const query = new URLSearchParams({ error: message, redirectTo });
+    return NextResponse.redirect(new URL(`/login?${query}`, getRequestOrigin(request)), 303);
   }
 }
+
+export const POST = withObservedRoute("/api/auth/login", handlePOST);

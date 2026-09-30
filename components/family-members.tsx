@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { useState } from "react";
 import { FAMILY_ROLE_LABELS, FamilyMemberView, FamilyRole } from "@/lib/types";
+import type { InvitationView } from "@/lib/family-invitations";
+import { InvitationManager } from "@/components/invitation-manager";
+import { requestAccountAction } from "@/lib/account-action-request";
 
 type FamilyMembersProps = {
   slug: string;
@@ -11,6 +14,7 @@ type FamilyMembersProps = {
   members: FamilyMemberView[];
   viewerRole: FamilyRole;
   backHref: string;
+  invitations?: InvitationView[];
 };
 
 export function FamilyMembers({
@@ -19,13 +23,12 @@ export function FamilyMembers({
   members,
   viewerRole,
   backHref,
+  invitations = [],
 }: FamilyMembersProps) {
   const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<FamilyRole>("member");
 
   const canManage = viewerRole === "owner" || viewerRole === "admin";
   const assignableRoles: FamilyRole[] =
@@ -49,42 +52,13 @@ export function FamilyMembers({
     setIsSubmitting(true);
 
     try {
-      const response = await request();
-      const result = (await response.json()) as {
-        error?: string;
-        message?: string;
-        leftFamily?: boolean;
-      };
-
-      if (!response.ok) {
-        throw new Error(result.error ?? fallbackError);
-      }
-
+      const result = await requestAccountAction(request, fallbackError);
       onSuccess(result);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : fallbackError);
     } finally {
       setIsSubmitting(false);
     }
-  }
-
-  function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    void runAction(
-      () =>
-        fetch(`/api/family/${slug}/members`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-        }),
-      "Не удалось добавить участника.",
-      (result) => {
-        setInviteEmail("");
-        setSuccessMessage(result.message ?? "Участник добавлен.");
-        router.refresh();
-      },
-    );
   }
 
   function handleRoleChange(member: FamilyMemberView, role: FamilyRole) {
@@ -161,44 +135,11 @@ export function FamilyMembers({
         </div>
       </div>
 
-      {errorMessage ? <p className="form-message error">{errorMessage}</p> : null}
-      {successMessage ? <p className="form-message success">{successMessage}</p> : null}
+      {errorMessage ? <p className="form-message error" role="alert">{errorMessage}</p> : null}
+      {successMessage ? <p className="form-message success" role="status">{successMessage}</p> : null}
 
       {canManage ? (
-        <form className="form-stack" onSubmit={handleInviteSubmit}>
-          <div className="form-grid">
-            <label className="form-field">
-              <span>Email зарегистрированного родственника</span>
-              <input
-                autoComplete="off"
-                name="email"
-                onChange={(event) => setInviteEmail(event.target.value)}
-                required
-                type="email"
-                value={inviteEmail}
-              />
-            </label>
-            <label className="form-field">
-              <span>Роль</span>
-              <select
-                name="role"
-                onChange={(event) => setInviteRole(event.target.value as FamilyRole)}
-                value={inviteRole}
-              >
-                {assignableRoles.map((role) => (
-                  <option key={role} value={role}>
-                    {FAMILY_ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="form-actions">
-            <button className="primary-button" disabled={isSubmitting} type="submit">
-              Добавить участника
-            </button>
-          </div>
-        </form>
+        <InvitationManager slug={slug} viewerRole={viewerRole} invitations={invitations} onRefresh={() => router.refresh()} />
       ) : null}
 
       <div className="journal-list">

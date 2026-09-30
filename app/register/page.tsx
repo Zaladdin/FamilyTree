@@ -11,7 +11,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
   const currentUser = await getCurrentUser();
 
   if (currentUser) {
-    redirect("/onboarding/family");
+    redirect("/account");
   }
 
   const { error } = await searchParams;
@@ -21,10 +21,10 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
       <SiteHeader compact />
       <AuthShell
         eyebrow="Регистрация"
-        title="Создайте аккаунт для вашей семьи"
-        description="Сначала пользователь создает личный аккаунт, затем открывает свое семейное пространство и начинает собирать древо."
+        title="Начните свою семейную историю"
+        description="Создайте личный аккаунт, а затем добавьте свою семью. Начать можно с одного имени — вашего."
         asideTitle="Что получит семья"
-        asideText="После регистрации можно создать семью, пригласить родственников и начать наполнять архив без дублирования людей."
+        asideText="Соберите близких в одном пространстве. Сохраните имена, фотографии и воспоминания, которые хочется передать дальше."
         points={[
           "Карточка памяти на каждого человека",
           "Проверка дублей по ФИО и дате рождения",
@@ -46,14 +46,15 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             </label>
           </div>
           <label className="form-field">
-            <span>Email</span>
+            <span>Электронная почта</span>
             <input autoComplete="email" name="email" required type="email" />
           </label>
           <label className="form-field">
             <span>Пароль</span>
             <input autoComplete="new-password" minLength={8} name="password" required type="password" />
+            <small>Не менее 8 символов</small>
           </label>
-          {error ? <p className="form-message error">{error}</p> : null}
+          {error ? <p className="form-message error" role="alert">{error}</p> : null}
           <div className="form-actions">
             <button className="primary-button" type="submit">
               Создать аккаунт

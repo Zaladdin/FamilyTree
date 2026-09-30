@@ -1,34 +1,50 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AddPersonInput,
   AddRelationshipKind,
-  UpdatePersonInput,
+  PersonUpdateRequest,
+  PersonRelationshipInput,
 } from "@/lib/family-logic";
-import { Family, FamilyPerson, Gender, MediaAsset } from "@/lib/types";
+import { Family, FamilyPerson, Gender, MediaAsset, Story } from "@/lib/types";
 import { FamilyWorkspace } from "@/components/family-workspace";
+import { PersonFormDialog } from "@/components/person-form-dialog";
+import { PersonLifeFields } from "@/components/person-life-fields";
+import { BatchPersonDialog } from "@/components/batch-person-dialog";
+import type { BatchPersonEntry } from "@/lib/family-batch";
+import { requestFamilyAction } from "@/lib/family-action-request";
+import { AdditionalRelationshipsFields, AutomaticParenthoodNotice, ExistingRelationshipFields, type ExistingRelationshipKind } from "@/components/family-relationship-fields";
+import { RecordedRelationships } from "@/components/recorded-relationships";
+import { normalizeTreeScale } from "@/lib/tree-viewport";
+import { StoryChangeDialog, type StoryDialogMode } from "@/components/story-dialog";
+import { useUnsavedChanges } from "@/components/use-unsaved-changes";
 
 type FamilyAppProps = {
   canEdit: boolean;
   initialFamily: Family;
-  initialFocusPersonId: string;
+  initialFocusPersonId: string | null;
 };
 
 type AddFormState = {
   firstName: string;
   lastName: string;
   middleName: string;
+  status: FamilyPerson["status"];
+  deathDate: string;
   gender: Gender;
   birthDate: string;
   birthPlace: string;
   biography: string;
   relationshipKind: AddRelationshipKind;
   relativePersonId: string;
+  sharedChildIds: string[];
+  additionalRelationships: PersonRelationshipInput[];
 };
 
 type EditFormState = {
+  expectedVersion: number | undefined;
   firstName: string;
   lastName: string;
   middleName: string;
@@ -45,32 +61,35 @@ type ApiResponse = {
   error?: string;
   message?: string;
   personId?: string;
+  warnings?: string[];
 };
+
+function successWithWarnings(result: ApiResponse, fallback: string) {
+  return [result.message ?? fallback, ...(result.warnings ?? [])].join(" ");
+}
 
 type UploadMediaState = {
   type: "photo" | "audio";
   file: File | null;
 };
 
-type StoryFormState = {
-  title: string;
-  narrator: string;
-  body: string;
-};
-
 const initialAddFormState = (
-  focusPersonId: string,
+  focusPersonId: string | null,
   relationshipKind: AddRelationshipKind = "child",
 ): AddFormState => ({
   firstName: "",
   lastName: "",
   middleName: "",
+  status: "living",
+  deathDate: "",
   gender: "female",
   birthDate: "",
   birthPlace: "",
   biography: "",
   relationshipKind,
-  relativePersonId: focusPersonId,
+  relativePersonId: focusPersonId ?? "",
+  sharedChildIds: [],
+  additionalRelationships: [],
 });
 
 // API мутаций над людьми подтверждает успех наличием personId в ответе,
@@ -84,6 +103,8 @@ function requirePersonId(result: ApiResponse, fallbackError: string): string {
 }
 
 const initialEditFormState = (person: FamilyPerson): EditFormState => ({
+  // Keep the revision of the opened draft even if fresh server props arrive.
+  expectedVersion: person.version,
   firstName: person.firstName,
   lastName: person.lastName,
   middleName: person.middleName ?? "",
@@ -134,19 +155,25 @@ export function FamilyApp({
   initialFocusPersonId,
 }: FamilyAppProps) {
   const [canvasScale, setCanvasScale] = useState(1);
-  const [activeSheet, setActiveSheet] = useState<"add" | "edit" | "media" | "story" | null>(null);
+  const [activeSheet, setActiveSheet] = useState<"add" | "batch" | "relationship" | "edit" | "media" | "story" | null>(null);
+  const [sheetPersonId, setSheetPersonId] = useState<string | null>(null);
+  const [selectedPersonId, setSelectedPersonId] = useState(initialFocusPersonId);
+  const [sheetPerson, setSheetPerson] = useState<FamilyPerson | null>(null);
+  const draftBaseline = useRef("");
+  const [childDirty, setChildDirty] = useState(false);
+  const [childBusy, setChildBusy] = useState(false);
+  const [batchSeedDirty, setBatchSeedDirty] = useState(false);
+  const storySequence = useRef(0);
+  const [storyFocusRevision, setStoryFocusRevision] = useState(0);
+  const [storyEditor, setStoryEditor] = useState<{ mode: StoryDialogMode; story?: Story; person: FamilyPerson; instance: number } | null>(null);
   const [addFormState, setAddFormState] = useState(() =>
     initialAddFormState(initialFocusPersonId),
   );
   const [editFormState, setEditFormState] = useState<EditFormState | null>(null);
+  const [relationshipFormState, setRelationshipFormState] = useState<{ relativePersonId: string; relationshipKind: ExistingRelationshipKind }>({ relativePersonId: "", relationshipKind: "parent" });
   const [uploadMediaState, setUploadMediaState] = useState<UploadMediaState>({
     type: "photo",
     file: null,
-  });
-  const [storyFormState, setStoryFormState] = useState<StoryFormState>({
-    title: "",
-    narrator: "",
-    body: "",
   });
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -156,37 +183,105 @@ export function FamilyApp({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const family = initialFamily;
-  const focusPersonId = initialFocusPersonId;
   const focusPerson =
-    family.people.find((person) => person.id === focusPersonId) ?? family.people[0];
+    family.people.find((person) => person.id === selectedPersonId) ?? null;
+  const focusPersonId = focusPerson?.id ?? null;
+  const draftPerson = sheetPersonId ? family.people.find((person) => person.id === sheetPersonId) ?? sheetPerson : null;
+  const isDirty = activeSheet === "batch" || activeSheet === "story" ? childDirty
+    : activeSheet === "add" ? JSON.stringify(addFormState) !== draftBaseline.current
+      : activeSheet === "edit" ? JSON.stringify(editFormState) !== draftBaseline.current
+        : activeSheet === "relationship" ? childDirty || JSON.stringify(relationshipFormState) !== draftBaseline.current
+          : activeSheet === "media" ? uploadMediaState.file !== null || uploadMediaState.type !== "photo" : false;
+  const { confirmDiscard, bypass } = useUnsavedChanges(isDirty, isSubmitting || childBusy);
 
-  function syncFocus(nextFocusPersonId: string) {
+  const discardSheet = useCallback(() => {
+    setActiveSheet(null);
+    setSheetPersonId(null);
+    setSheetPerson(null);
+    setEditFormState(null);
+    setRelationshipFormState({ relativePersonId: "", relationshipKind: "parent" });
+    setUploadMediaState({ type: "photo", file: null });
+    setStoryEditor(null);
+    setChildDirty(false);
+    setChildBusy(false);
+    setErrorMessage("");
+  }, []);
+
+  // A refreshed URL never silently discards an open draft. On a rejected
+  // same-page Back/Forward, retain its person and restore that perspective's URL.
+  const observedFocus = useRef(initialFocusPersonId);
+  useEffect(() => {
+    if (observedFocus.current === initialFocusPersonId) return;
+    observedFocus.current = initialFocusPersonId;
+    if (selectedPersonId === initialFocusPersonId) return;
+    if (!confirmDiscard()) {
+      const params = new URLSearchParams(searchParams.toString());
+      if (selectedPersonId) params.set("person", selectedPersonId); else params.delete("person");
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+      return;
+    }
+    discardSheet();
+    setSelectedPersonId(initialFocusPersonId);
+    setAddFormState(initialAddFormState(initialFocusPersonId));
+  }, [initialFocusPersonId, selectedPersonId, confirmDiscard, searchParams, router, pathname, discardSheet]);
+
+  function syncFocus(nextFocusPersonId: string | null) {
+    if (nextFocusPersonId !== null && !family.people.some((person) => person.id === nextFocusPersonId)) {
+      return;
+    }
+    if (nextFocusPersonId === focusPersonId || !confirmDiscard()) return;
+    discardSheet();
+    setSelectedPersonId(nextFocusPersonId);
+    setSuccessMessage("");
+    setAddFormState(initialAddFormState(nextFocusPersonId));
     const params = new URLSearchParams(searchParams.toString());
-    params.set("person", nextFocusPersonId);
+    if (nextFocusPersonId === null) {
+      params.delete("person");
+    } else {
+      params.set("person", nextFocusPersonId);
+    }
+    const query = params.toString();
 
     startTransition(() => {
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
     });
   }
 
   function closeSheet() {
-    setActiveSheet(null);
-    setErrorMessage("");
+    if (confirmDiscard()) discardSheet();
   }
 
   function handleOpenAddPerson() {
+    if (!canEdit || !confirmDiscard()) return;
+    discardSheet();
+    const draft = initialAddFormState(focusPersonId);
+    draftBaseline.current = JSON.stringify(draft);
     setActiveSheet("add");
+    setSheetPersonId(null);
     setErrorMessage("");
     setSuccessMessage("");
-    setAddFormState(initialAddFormState(focusPersonId));
+    setAddFormState(draft);
+  }
+
+  function handleOpenAddRelationship() {
+    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    discardSheet();
+    draftBaseline.current = JSON.stringify({ relativePersonId: "", relationshipKind: "parent" });
+    setActiveSheet("relationship");
+    setSheetPersonId(focusPerson.id);
+    setSheetPerson(focusPerson);
+    setRelationshipFormState({ relativePersonId: "", relationshipKind: "parent" });
+    setErrorMessage("");
+    setSuccessMessage("");
   }
 
   function handleZoomIn() {
-    setCanvasScale((current) => Math.min(1.2, Number((current + 0.08).toFixed(2))));
+    setCanvasScale((current) => normalizeTreeScale(current + 0.1));
   }
 
   function handleZoomOut() {
-    setCanvasScale((current) => Math.max(0.82, Number((current - 0.08).toFixed(2))));
+    setCanvasScale((current) => normalizeTreeScale(current - 0.1));
   }
 
   function handleResetZoom() {
@@ -194,18 +289,28 @@ export function FamilyApp({
   }
 
   function handleScaleChange(nextScale: number) {
-    setCanvasScale(Number(nextScale.toFixed(2)));
+    setCanvasScale(normalizeTreeScale(nextScale));
   }
 
   function handleOpenEditPerson() {
+    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    discardSheet();
+    const draft = initialEditFormState(focusPerson);
+    draftBaseline.current = JSON.stringify(draft);
     setActiveSheet("edit");
+    setSheetPersonId(focusPerson.id);
+    setSheetPerson(focusPerson);
     setErrorMessage("");
     setSuccessMessage("");
-    setEditFormState(initialEditFormState(focusPerson));
+    setEditFormState(draft);
   }
 
   function handleOpenUploadMedia() {
+    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    discardSheet();
     setActiveSheet("media");
+    setSheetPersonId(focusPerson.id);
+    setSheetPerson(focusPerson);
     setErrorMessage("");
     setSuccessMessage("");
     setUploadMediaState({
@@ -215,14 +320,18 @@ export function FamilyApp({
   }
 
   function handleOpenCreateStory() {
+    openStory("create");
+  }
+
+  function openStory(mode: StoryDialogMode, story?: Story) {
+    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    discardSheet();
     setActiveSheet("story");
+    setSheetPersonId(focusPerson.id);
+    setSheetPerson(focusPerson);
+    setStoryEditor({ mode, story, person: focusPerson, instance: ++storySequence.current });
     setErrorMessage("");
     setSuccessMessage("");
-    setStoryFormState({
-      title: "",
-      narrator: "",
-      body: "",
-    });
   }
 
   // Общий каркас всех мутаций: сброс сообщений, блокировка формы, разбор
@@ -242,12 +351,7 @@ export function FamilyApp({
     setIsSubmitting(true);
 
     try {
-      const response = await request();
-      const result = (await response.json()) as ApiResponse;
-
-      if (!response.ok) {
-        throw new Error(result.error ?? fallbackError);
-      }
+      const result = await requestFamilyAction(request, fallbackError);
 
       onSuccess(result);
     } catch (error) {
@@ -259,17 +363,25 @@ export function FamilyApp({
 
   async function handleAddSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canEdit || isSubmitting) return;
+    if (family.people.length > 0 && !family.people.some((person) => person.id === addFormState.relativePersonId)) {
+      setErrorMessage("Выберите родственника, с которым нужно связать нового человека.");
+      return;
+    }
 
     const payload: AddPersonInput = {
       firstName: addFormState.firstName,
       lastName: addFormState.lastName,
       middleName: addFormState.middleName,
+      status: addFormState.status,
+      deathDate: addFormState.status === "deceased" ? addFormState.deathDate : "",
       gender: addFormState.gender,
       birthDate: addFormState.birthDate,
       birthPlace: addFormState.birthPlace,
       biography: addFormState.biography,
       relationshipKind: addFormState.relationshipKind,
       relativePersonId: addFormState.relativePersonId,
+      additionalRelationships: family.people.length ? addFormState.additionalRelationships : [],
     };
 
     await runAction({
@@ -286,8 +398,10 @@ export function FamilyApp({
         const personId = requirePersonId(result, "Не удалось добавить человека.");
 
         setAddFormState(initialAddFormState(personId));
-        setActiveSheet(null);
-        setSuccessMessage(result.message ?? "Человек добавлен.");
+        bypass();
+        discardSheet();
+        setSelectedPersonId(personId);
+        setSuccessMessage(successWithWarnings(result, "Человек добавлен."));
 
         const params = new URLSearchParams(searchParams.toString());
         params.set("person", personId);
@@ -300,14 +414,46 @@ export function FamilyApp({
     });
   }
 
+  async function handleBatchSubmit(people: BatchPersonEntry[]) {
+    if (!canEdit || isSubmitting || isPending) return;
+    await runAction({
+      request: () => fetch(`/api/family/${family.slug}/people/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ people }),
+      }),
+      fallbackError: "Не удалось добавить людей. Введённые данные сохранены в форме.",
+      onSuccess: (result) => {
+        const personId = requirePersonId(result, "Не удалось подтвердить добавление людей. Обновите дерево перед повторной попыткой.");
+        bypass();
+        discardSheet();
+        setSelectedPersonId(personId);
+        setSuccessMessage(successWithWarnings(result, `Добавлено людей: ${people.length}.`));
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("person", personId);
+        startTransition(() => {
+          router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+          router.refresh();
+        });
+      },
+    });
+  }
+
   async function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editFormState) {
+    if (!canEdit || !draftPerson || !editFormState || isSubmitting) {
       return;
     }
 
-    const payload: UpdatePersonInput = {
+    const expectedVersion = editFormState.expectedVersion;
+    if (expectedVersion === undefined || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      setErrorMessage("Не удалось определить версию карточки. Скопируйте черновик и обновите страницу перед сохранением.");
+      return;
+    }
+
+    const payload: PersonUpdateRequest = {
+      expectedVersion,
       firstName: editFormState.firstName,
       lastName: editFormState.lastName,
       middleName: editFormState.middleName,
@@ -321,19 +467,27 @@ export function FamilyApp({
     };
 
     await runAction({
-      request: () =>
-        fetch(`/api/family/${family.slug}/people/${focusPerson.id}`, {
+      request: async () => {
+        const response = await fetch(`/api/family/${family.slug}/people/${draftPerson.id}`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(payload),
-        }),
+        });
+        if (response.status === 409) {
+          // Refresh the saved card while retaining this draft and its original
+          // revision. Reopening the editor then starts from the latest card.
+          startTransition(() => router.refresh());
+        }
+        return response;
+      },
       fallbackError: "Не удалось обновить карточку человека.",
       onSuccess: (result) => {
         requirePersonId(result, "Не удалось обновить карточку человека.");
 
-        setActiveSheet(null);
+        bypass();
+        discardSheet();
         setSuccessMessage(result.message ?? "Карточка обновлена.");
 
         startTransition(() => {
@@ -343,8 +497,33 @@ export function FamilyApp({
     });
   }
 
+  async function handleRelationshipSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canEdit || !draftPerson || isSubmitting || isPending) return;
+    if (!family.people.some((person) => person.id === relationshipFormState.relativePersonId && person.id !== draftPerson.id && !person.isArchived)) {
+      setErrorMessage("Выберите другого человека из этого дерева.");
+      return;
+    }
+    await runAction({
+      request: () => fetch(`/api/family/${family.slug}/people/${draftPerson.id}/relationships`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(relationshipFormState),
+      }),
+      fallbackError: "Не удалось добавить связь.",
+      onSuccess: (result) => {
+        requirePersonId(result, "Не удалось добавить связь.");
+        bypass();
+        discardSheet();
+        setSuccessMessage(successWithWarnings(result, "Связь добавлена."));
+        startTransition(() => router.refresh());
+      },
+    });
+  }
+
   async function handleUploadMediaSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canEdit || !draftPerson || isSubmitting) return;
     setErrorMessage("");
     setSuccessMessage("");
 
@@ -361,14 +540,15 @@ export function FamilyApp({
         formData.append("type", uploadMediaState.type);
         formData.append("file", file);
 
-        return fetch(`/api/family/${family.slug}/people/${focusPerson.id}/media`, {
+        return fetch(`/api/family/${family.slug}/people/${draftPerson.id}/media`, {
           method: "POST",
           body: formData,
         });
       },
       fallbackError: "Не удалось загрузить файл.",
       onSuccess: (result) => {
-        setActiveSheet(null);
+        bypass();
+        discardSheet();
         setUploadMediaState({
           type: "photo",
           file: null,
@@ -383,6 +563,7 @@ export function FamilyApp({
   }
 
   async function handleDeleteMedia(asset: MediaAsset) {
+    if (!canEdit || !focusPerson || isSubmitting || !focusPerson.mediaAssets.some((item) => item.id === asset.id)) return;
     await runAction({
       request: () =>
         fetch(
@@ -403,6 +584,7 @@ export function FamilyApp({
   }
 
   async function handleArchivePerson() {
+    if (!canEdit || !focusPerson || isSubmitting || !confirmDiscard()) return;
     await runAction({
       request: () =>
         fetch(`/api/family/${family.slug}/people/${focusPerson.id}/archive`, {
@@ -412,49 +594,17 @@ export function FamilyApp({
       onSuccess: (result) => {
         requirePersonId(result, "Не удалось архивировать человека.");
 
-        const nextPerson =
-          family.people.find((person) => person.id !== focusPerson.id) ?? family.people[0];
-
-        if (!nextPerson || nextPerson.id === focusPerson.id) {
-          throw new Error("Не удалось подобрать новый фокус дерева после архивации.");
-        }
-
+        bypass();
+        discardSheet();
+        setSelectedPersonId(null);
         setSuccessMessage(result.message ?? "Человек архивирован.");
 
         const params = new URLSearchParams(searchParams.toString());
-        params.set("person", nextPerson.id);
+        params.delete("person");
+        const query = params.toString();
 
         startTransition(() => {
-          router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-          router.refresh();
-        });
-      },
-    });
-  }
-
-  async function handleCreateStorySubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    await runAction({
-      request: () =>
-        fetch(`/api/family/${family.slug}/people/${focusPerson.id}/stories`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(storyFormState),
-        }),
-      fallbackError: "Не удалось добавить историю.",
-      onSuccess: (result) => {
-        setActiveSheet(null);
-        setStoryFormState({
-          title: "",
-          narrator: "",
-          body: "",
-        });
-        setSuccessMessage(result.message ?? "История добавлена.");
-
-        startTransition(() => {
+          router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
           router.refresh();
         });
       },
@@ -473,24 +623,33 @@ export function FamilyApp({
       onResetZoom={handleResetZoom}
       onScaleChange={handleScaleChange}
       onOpenAddPerson={canEdit ? handleOpenAddPerson : undefined}
-      onOpenEditPerson={canEdit ? handleOpenEditPerson : undefined}
-      onOpenUploadMedia={canEdit ? handleOpenUploadMedia : undefined}
-      onOpenCreateStory={canEdit ? handleOpenCreateStory : undefined}
-      onDeleteMedia={canEdit ? handleDeleteMedia : undefined}
-      onArchivePerson={canEdit ? handleArchivePerson : undefined}
+      onOpenAddRelationship={canEdit && focusPerson ? handleOpenAddRelationship : undefined}
+      onOpenEditPerson={canEdit && focusPerson ? handleOpenEditPerson : undefined}
+      onOpenUploadMedia={canEdit && focusPerson ? handleOpenUploadMedia : undefined}
+      onOpenCreateStory={canEdit && focusPerson ? handleOpenCreateStory : undefined}
+      onEditStory={canEdit && focusPerson ? (story) => openStory("edit", story) : undefined}
+      onDeleteStory={canEdit && focusPerson ? (story) => openStory("delete", story) : undefined}
+      onRestoreStory={canEdit && focusPerson ? (story) => openStory("restore", story) : undefined}
+      storyFocusRevision={storyFocusRevision}
+      onDeleteMedia={canEdit && focusPerson ? handleDeleteMedia : undefined}
+      onArchivePerson={canEdit && focusPerson ? handleArchivePerson : undefined}
       addPersonSheet={
         activeSheet === "add" ? (
-          <SheetShell
-            description="Создайте нового человека и сразу привяжите его к уже существующему родственнику."
-            eyebrow="Новый человек"
+          <PersonFormDialog
+            description={family.people.length ? "Укажите основные данные и связь с семьёй." : "С него начнётся история вашей семьи."}
+            busy={isSubmitting || isPending}
             onClose={closeSheet}
-            title="Добавить человека и связь"
+            title={family.people.length ? "Добавить человека" : "Добавить первого человека"}
           >
-            <form className="form-stack" onSubmit={handleAddSubmit}>
+            <form className="form-stack person-mini-form" onSubmit={handleAddSubmit}>
+              <fieldset className="story-form-fields form-stack" disabled={isSubmitting || isPending}>
+              <button className="secondary-button" disabled={isSubmitting || isPending} type="button" onClick={() => { setErrorMessage(""); setBatchSeedDirty(isDirty); setChildDirty(isDirty); setActiveSheet("batch"); }}>Несколько человек</button>
               <div className="form-grid">
                 <label className="form-field">
                   <span>Имя</span>
                   <input
+                    data-autofocus
+                    autoComplete="given-name"
                     onChange={(event) =>
                       setAddFormState((current) => ({
                         ...current,
@@ -516,19 +675,12 @@ export function FamilyApp({
                 </label>
               </div>
 
+              <label className="form-field">
+                <span>Отчество</span>
+                <input autoComplete="additional-name" onChange={(event) => setAddFormState((current) => ({ ...current, middleName: event.target.value }))} value={addFormState.middleName} />
+              </label>
+
               <div className="form-grid">
-                <label className="form-field">
-                  <span>Отчество</span>
-                  <input
-                    onChange={(event) =>
-                      setAddFormState((current) => ({
-                        ...current,
-                        middleName: event.target.value,
-                      }))
-                    }
-                    value={addFormState.middleName}
-                  />
-                </label>
                 <label className="form-field">
                   <span>Пол</span>
                   <select
@@ -545,9 +697,6 @@ export function FamilyApp({
                     <option value="female">Женский</option>
                   </select>
                 </label>
-              </div>
-
-              <div className="form-grid">
                 <label className="form-field">
                   <span>Дата рождения</span>
                   <input
@@ -557,11 +706,12 @@ export function FamilyApp({
                         birthDate: event.target.value,
                       }))
                     }
-                    placeholder="Например, 2026 или 14.03.1991"
+                    placeholder="Год или ДД.ММ.ГГГГ"
                     required
                     value={addFormState.birthDate}
                   />
                 </label>
+              </div>
                 <label className="form-field">
                   <span>Место рождения</span>
                   <input
@@ -575,18 +725,20 @@ export function FamilyApp({
                     value={addFormState.birthPlace}
                   />
                 </label>
-              </div>
+
+              <PersonLifeFields status={addFormState.status} deathDate={addFormState.deathDate} onChange={(life) => setAddFormState((current) => ({ ...current, ...life }))} />
 
               {family.people.length > 0 ? (
               <div className="form-grid">
                 <label className="form-field">
-                  <span>Кем приходится выбранному человеку</span>
+                  <span>Кем приходится</span>
                   <select
                     className="form-select"
                     onChange={(event) =>
                       setAddFormState((current) => ({
                         ...current,
                         relationshipKind: event.target.value as AddRelationshipKind,
+                        sharedChildIds: [],
                       }))
                     }
                     value={addFormState.relationshipKind}
@@ -598,17 +750,20 @@ export function FamilyApp({
                   </select>
                 </label>
                 <label className="form-field">
-                  <span>Относительно кого создать связь</span>
+                  <span>С кем связать</span>
                   <select
                     className="form-select"
                     onChange={(event) =>
                       setAddFormState((current) => ({
                         ...current,
                         relativePersonId: event.target.value,
+                        sharedChildIds: [],
                       }))
                     }
+                    required
                     value={addFormState.relativePersonId}
                   >
+                    <option disabled value="">Выберите родственника</option>
                     {family.people.map((person) => (
                       <option key={person.id} value={person.id}>
                         {[person.firstName, person.middleName, person.lastName]
@@ -621,42 +776,71 @@ export function FamilyApp({
               </div>
               ) : null}
 
-              <label className="form-field">
-                <span>Краткая биография</span>
-                <textarea
-                  onChange={(event) =>
-                    setAddFormState((current) => ({
-                      ...current,
-                      biography: event.target.value,
-                    }))
-                  }
-                  rows={4}
-                  value={addFormState.biography}
-                />
-              </label>
+              {family.people.length > 0 ? <AutomaticParenthoodNotice relationshipKind={addFormState.relationshipKind} /> : null}
+              {family.people.length > 0 ? <AdditionalRelationshipsFields people={family.people} relationships={addFormState.additionalRelationships} disabled={isSubmitting || isPending} onChange={(additionalRelationships) => setAddFormState((current) => ({ ...current, additionalRelationships }))} /> : null}
 
-              <div className="chip-row">
-                <span className="status-chip active">
-                  Проверка дублей по ФИО и дате рождения
-                </span>
-                <span className="status-chip">
-                  После добавления дерево обновится сразу
-                </span>
-              </div>
+              <details className="person-mini-form__details">
+                <summary>Дополнительно <span>биография</span></summary>
+                <div>
+                  <label className="form-field">
+                    <span>Краткая биография</span>
+                    <textarea
+                      onChange={(event) => setAddFormState((current) => ({ ...current, biography: event.target.value }))}
+                      rows={3}
+                      value={addFormState.biography}
+                    />
+                  </label>
+                </div>
+              </details>
 
-              {errorMessage ? <p className="form-message error">{errorMessage}</p> : null}
+              {errorMessage ? <p className="form-message error" role="alert">{errorMessage}</p> : null}
 
               <div className="form-actions">
                 <button className="primary-button" disabled={isSubmitting || isPending} type="submit">
-                  {isSubmitting ? "Сохраняем..." : "Добавить человека"}
+                  {isSubmitting ? "Сохраняем..." : "Добавить"}
                 </button>
-                <button className="ghost-button" onClick={closeSheet} type="button">
+                <button className="ghost-button" disabled={isSubmitting || isPending} onClick={closeSheet} type="button">
                   Отмена
                 </button>
               </div>
+              </fieldset>
+            </form>
+          </PersonFormDialog>
+        ) : activeSheet === "batch" ? (
+          <BatchPersonDialog family={family} focusPersonId={focusPersonId} initialPerson={addFormState} initialDirty={batchSeedDirty} onDirtyChange={setChildDirty} busy={isSubmitting || isPending} errorMessage={errorMessage} onClose={closeSheet} onSubmit={handleBatchSubmit} />
+        ) : activeSheet === "relationship" && draftPerson ? (
+          <SheetShell
+            description="Проверьте записанные связи, исправьте их или добавьте связь с существующим человеком. Дерево обновится после сохранения."
+            eyebrow="Родственные связи"
+            onClose={closeSheet}
+            title="Связи человека"
+          >
+            <RecordedRelationships family={family} subject={draftPerson}
+              disabled={isSubmitting || isPending}
+              onSuccess={(result) => setSuccessMessage(successWithWarnings(result, "Связь сохранена."))}
+              onDirtyChange={setChildDirty} onBusyChange={setChildBusy} confirmDiscard={confirmDiscard}
+              onRefresh={() => startTransition(() => router.refresh())} />
+            <h3>Добавить связь</h3>
+            <form className="form-stack" onSubmit={handleRelationshipSubmit}>
+              <ExistingRelationshipFields
+                subject={draftPerson}
+                people={family.people}
+                relativePersonId={relationshipFormState.relativePersonId}
+                relationshipKind={relationshipFormState.relationshipKind}
+                disabled={isSubmitting || isPending}
+                onRelativeChange={(relativePersonId) => setRelationshipFormState((current) => ({ ...current, relativePersonId }))}
+                onKindChange={(relationshipKind) => setRelationshipFormState((current) => ({ ...current, relationshipKind }))}
+              />
+              {errorMessage ? <p className="form-message error" role="alert">{errorMessage}</p> : null}
+              <div className="form-actions">
+                <button className="primary-button" disabled={isSubmitting || isPending || !relationshipFormState.relativePersonId} type="submit">
+                  {isSubmitting ? "Сохраняем..." : "Сохранить связь"}
+                </button>
+                <button className="ghost-button" onClick={closeSheet} type="button">Отмена</button>
+              </div>
             </form>
           </SheetShell>
-        ) : activeSheet === "edit" && editFormState ? (
+        ) : activeSheet === "edit" && draftPerson && editFormState ? (
           <SheetShell
             description="Изменения сохраняются в базу и сразу отражаются в карточке человека и дереве."
             eyebrow="Редактирование"
@@ -664,6 +848,7 @@ export function FamilyApp({
             title="Редактировать карточку человека"
           >
             <form className="form-stack" onSubmit={handleEditSubmit}>
+              <fieldset className="story-form-fields form-stack" disabled={isSubmitting || isPending}>
               <div className="form-grid">
                 <label className="form-field">
                   <span>Имя</span>
@@ -840,7 +1025,7 @@ export function FamilyApp({
                 </span>
               </div>
 
-              {errorMessage ? <p className="form-message error">{errorMessage}</p> : null}
+              {errorMessage ? <p className="form-message error" role="alert">{errorMessage}</p> : null}
 
               <div className="form-actions">
                 <button className="primary-button" disabled={isSubmitting || isPending} type="submit">
@@ -850,9 +1035,10 @@ export function FamilyApp({
                   Отмена
                 </button>
               </div>
+              </fieldset>
             </form>
           </SheetShell>
-        ) : activeSheet === "media" ? (
+        ) : activeSheet === "media" && draftPerson ? (
           <SheetShell
             description="Файл сохранится на диск в uploads и попадет в карточку человека как часть медиаархива."
             eyebrow="Медиаархив"
@@ -860,6 +1046,7 @@ export function FamilyApp({
             title="Загрузить фото или голосовой файл"
           >
             <form className="form-stack" onSubmit={handleUploadMediaSubmit}>
+              <fieldset className="story-form-fields form-stack" disabled={isSubmitting || isPending}>
               <div className="form-grid">
                 <label className="form-field">
                   <span>Тип файла</span>
@@ -922,80 +1109,14 @@ export function FamilyApp({
                   Отмена
                 </button>
               </div>
+              </fieldset>
             </form>
           </SheetShell>
-        ) : activeSheet === "story" ? (
-          <SheetShell
-            description="История будет сохранена в карточке человека и станет частью семейной памяти."
-            eyebrow="История"
-            onClose={closeSheet}
-            title="Добавить историю или легенду"
-          >
-            <form className="form-stack" onSubmit={handleCreateStorySubmit}>
-              <label className="form-field">
-                <span>Заголовок</span>
-                <input
-                  onChange={(event) =>
-                    setStoryFormState((current) => ({
-                      ...current,
-                      title: event.target.value,
-                    }))
-                  }
-                  required
-                  value={storyFormState.title}
-                />
-              </label>
-
-              <label className="form-field">
-                <span>Рассказчик</span>
-                <input
-                  onChange={(event) =>
-                    setStoryFormState((current) => ({
-                      ...current,
-                      narrator: event.target.value,
-                    }))
-                  }
-                  placeholder="Например, Ахмед Магомедов"
-                  value={storyFormState.narrator}
-                />
-              </label>
-
-              <label className="form-field">
-                <span>Текст истории</span>
-                <textarea
-                  onChange={(event) =>
-                    setStoryFormState((current) => ({
-                      ...current,
-                      body: event.target.value,
-                    }))
-                  }
-                  required
-                  rows={6}
-                  value={storyFormState.body}
-                />
-              </label>
-
-              <div className="chip-row">
-                <span className="status-chip active">
-                  История привяжется к текущему человеку
-                </span>
-                <span className="status-chip">
-                  Событие сохранится в журнале изменений
-                </span>
-              </div>
-
-              {errorMessage ? <p className="form-message error">{errorMessage}</p> : null}
-
-              <div className="form-actions">
-                <button className="primary-button" disabled={isSubmitting || isPending} type="submit">
-                  {isSubmitting ? "Сохраняем..." : "Добавить историю"}
-                </button>
-                <button className="ghost-button" onClick={closeSheet} type="button">
-                  Отмена
-                </button>
-              </div>
-            </form>
-          </SheetShell>
+        ) : activeSheet === "story" && storyEditor ? (
+          <StoryChangeDialog key={storyEditor.instance} slug={family.slug} subject={storyEditor.person} mode={storyEditor.mode} story={storyEditor.story}
+            onClose={closeSheet} onDirtyChange={setChildDirty} onBusyChange={setChildBusy}
+            onRefresh={() => startTransition(() => router.refresh())}
+            onSuccess={(result) => { bypass(); discardSheet(); setStoryFocusRevision((revision) => revision + 1); setSuccessMessage(result.message ?? "История сохранена."); }} />
         ) : null
       }
       feedbackMessage={successMessage}

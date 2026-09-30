@@ -2,19 +2,26 @@ export type Gender = "male" | "female";
 
 export type FamilyRole = "owner" | "admin" | "editor" | "member" | "guest";
 
-export type RelationshipType = "parent" | "spouse";
+export type RelationshipType = "parent" | "spouse" | "sibling";
 export type MediaAssetType = "photo" | "audio";
 export type AuditAction =
   | "person_created"
   | "person_updated"
   | "media_added"
   | "media_deleted"
+  | "media_cleanup_failed"
   | "person_archived"
   | "person_restored"
   | "story_added"
+  | "story_updated"
+  | "story_deleted"
+  | "story_restored"
   | "member_added"
   | "member_role_changed"
-  | "member_removed";
+  | "member_removed"
+  | "invitation_created"
+  | "invitation_updated"
+  | "invitation_revoked";
 
 export type FamilyStats = {
   people: number;
@@ -49,6 +56,8 @@ export type MediaAsset = {
 
 export type Story = {
   id: string;
+  version?: number;
+  deletedAt?: string;
   title: string;
   body: string;
   narrator?: string;
@@ -67,6 +76,8 @@ export type AuditEntry = {
 
 export type FamilyPerson = {
   id: string;
+  // Persisted cards include a version; read-only synthetic data may omit it.
+  version?: number;
   firstName: string;
   lastName: string;
   middleName?: string;
@@ -82,10 +93,15 @@ export type FamilyPerson = {
   media: PersonMedia;
   mediaAssets: MediaAsset[];
   stories: Story[];
+  deletedStories?: Story[];
   memory?: AudioMemory;
 };
 
 export type FamilyRelationship = {
+  id?: string;
+  version?: number;
+  origin?: "manual" | "spouse" | "sibling";
+  sourcePersonId?: string;
   fromPersonId: string;
   toPersonId: string;
   type: RelationshipType;
@@ -145,6 +161,9 @@ export type Family = {
   people: FamilyPerson[];
   archivedPeople: FamilyPerson[];
   relationships: FamilyRelationship[];
+  /** Full recorded graph, including archived endpoints, for relationship editing. */
+  recordedRelationships?: FamilyRelationship[];
+  parentSuppressions?: { fromPersonId: string; toPersonId: string }[];
   auditLog: AuditEntry[];
 };
 

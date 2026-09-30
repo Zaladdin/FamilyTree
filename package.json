@@ -2,6 +2,11 @@
   "name": "family-tree",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.19.0",
+    "npm": "10.9.3"
+  },
+  "packageManager": "npm@10.9.3",
   "prisma": {
     "seed": "node prisma/seed.mjs"
   },
@@ -18,23 +23,34 @@
     "db:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
     "prisma:seed": "node prisma/seed.mjs",
-    "test": "prisma generate && tsx --test --test-concurrency=1 tests/*.test.ts"
+    "test": "tsx scripts/run-tests.ts",
+    "test:integration": "tsx scripts/run-tests.ts integration",
+    "typecheck": "tsc --noEmit --incremental false",
+    "ci:database": "tsx scripts/ci-database.ts",
+    "test:smoke": "tsx scripts/ops-smoke.ts",
+    "test:upgrade": "tsx scripts/legacy-upgrade.ts",
+    "test:recovery": "tsx scripts/recovery-drill.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.8.2",
-    "next": "15.3.3",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "next": "15.5.26",
+    "react": "19.1.9",
+    "react-dom": "19.1.9"
   },
   "optionalDependencies": {
     "ioredis": "^5.4.1"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.28"
+    }
   },
   "devDependencies": {
     "@types/node": "22.15.29",
     "@types/react": "19.1.6",
     "@types/react-dom": "19.1.5",
     "eslint": "^8.57.1",
-    "eslint-config-next": "15.3.3",
+    "eslint-config-next": "15.5.26",
     "prisma": "^6.8.2",
     "tsx": "^4.22.3",
     "typescript": "5.8.3"

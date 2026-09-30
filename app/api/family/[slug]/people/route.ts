@@ -1,6 +1,7 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
 import { requireFamilyRole } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { createPersonInFamily } from "@/lib/family-repository";
 import { assertSameOrigin, parseAddPersonInput } from "@/lib/request-validation";
 
@@ -8,7 +9,7 @@ type RouteContext = {
   params: Promise<{ slug: string }>;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+async function handlePOST(request: Request, context: RouteContext) {
   const { slug } = await context.params;
 
   try {
@@ -19,22 +20,21 @@ export async function POST(request: Request, context: RouteContext) {
       slug,
       payload,
       `${access.user.firstName} ${access.user.lastName}`,
+      access.user.id,
     );
 
     return NextResponse.json({
       message: `${person.firstName} ${person.lastName} добавлен(а) в дерево.`,
       personId: person.id,
+      warnings: person.warnings,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось сохранить человека в базу.",
-      },
-      { status },
-    );
+    const { status, body } = familyWriteErrorResponse(error, {
+      fallback: "Не удалось сохранить человека в базу.",
+      invalidJson: "Некорректные данные человека.",
+    });
+    return NextResponse.json(body, { status });
   }
 }
+
+export const POST = withObservedRoute("/api/family/[slug]/people", handlePOST);

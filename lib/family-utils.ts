@@ -1,4 +1,4 @@
-import { Family, FamilyPerson, FocusRelatives } from "@/lib/types";
+import { Family, FamilyPerson, FocusRelatives, RelationshipType } from "@/lib/types";
 
 export function getPersonFullName(person: FamilyPerson) {
   return [person.firstName, person.middleName, person.lastName]
@@ -48,8 +48,8 @@ export function getFocusRelatives(
 
   const parentIds = new Set(parents.map((parent) => parent.id));
 
-  const siblings = uniquePeople(
-    family.relationships
+  const siblings = uniquePeople([
+    ...family.relationships
       .filter(
         (relationship) =>
           relationship.type === "parent" && parentIds.has(relationship.fromPersonId),
@@ -57,9 +57,18 @@ export function getFocusRelatives(
       .map((relationship) => personMap.get(relationship.toPersonId))
       .filter((person): person is FamilyPerson => Boolean(person))
       .filter((person) => person.id !== focusPersonId),
-  );
+    ...family.relationships
+      .filter((relationship) => relationship.type === "sibling" && (relationship.fromPersonId === focusPersonId || relationship.toPersonId === focusPersonId))
+      .map((relationship) => personMap.get(relationship.fromPersonId === focusPersonId ? relationship.toPersonId : relationship.fromPersonId))
+      .filter((person): person is FamilyPerson => Boolean(person && person.id !== focusPersonId)),
+  ]);
 
-  return { parents, spouses, siblings, children };
+  return {
+    parents: uniquePeople(parents),
+    spouses: uniquePeople(spouses),
+    siblings,
+    children: uniquePeople(children),
+  };
 }
 
 export type RelationKind = "focus" | "parent" | "spouse" | "sibling" | "child";
@@ -86,9 +95,11 @@ export type FamilyTreeLayoutNode = {
   y: number;
   role: string;
   isFocus: boolean;
+  size?: number;
+  isContext?: boolean;
 };
 
-export type FamilyTreeLayoutLink = { key: string; d: string };
+export type FamilyTreeLayoutLink = { key: string; d: string; relationshipKeys?: string[]; type?: RelationshipType };
 
 export type FamilyTreeLayout = {
   nodes: FamilyTreeLayoutNode[];
@@ -123,35 +134,34 @@ export function buildFamilyTreeLayout(
   }
 
   const relatives = getFocusRelatives(family, focus.id);
-  const parents = relatives.parents.slice(0, 2);
-  const spouse = relatives.spouses[0];
+  const parents = relatives.parents;
+  const spouses = relatives.spouses;
   const siblings = relatives.siblings;
   const children = relatives.children;
 
   const placed: PlacedNode[] = [];
-  placed.push({ person: focus, x: 0, y: 0, role: getRelationLabel("focus", focus), isFocus: true });
-
-  const spouseX = COL_GAP;
-  if (spouse) {
-    placed.push({ person: spouse, x: spouseX, y: 0, role: getRelationLabel("spouse", spouse), isFocus: false });
+  const placedIds = new Set<string>();
+  function place(person: FamilyPerson, x: number, y: number, kind: RelationKind) {
+    if (placedIds.has(person.id)) return;
+    placedIds.add(person.id);
+    placed.push({ person, x, y, role: getRelationLabel(kind, person), isFocus: kind === "focus" });
   }
+  place(focus, 0, 0, "focus");
+
+  spouses.forEach((spouse, index) => place(spouse, COL_GAP * (index + 1), 0, "spouse"));
 
   siblings.forEach((sibling, index) => {
-    placed.push({ person: sibling, x: -COL_GAP * (index + 1), y: 0, role: getRelationLabel("sibling", sibling), isFocus: false });
+    place(sibling, -COL_GAP * (index + 1), 0, "sibling");
   });
 
-  const parentsY = -ROW_GAP;
-  if (parents.length === 2) {
-    placed.push({ person: parents[0], x: -COL_GAP / 2, y: parentsY, role: getRelationLabel("parent", parents[0]), isFocus: false });
-    placed.push({ person: parents[1], x: COL_GAP / 2, y: parentsY, role: getRelationLabel("parent", parents[1]), isFocus: false });
-  } else if (parents.length === 1) {
-    placed.push({ person: parents[0], x: 0, y: parentsY, role: getRelationLabel("parent", parents[0]), isFocus: false });
-  }
+  parents.forEach((parent, index) => {
+    place(parent, (index - (parents.length - 1) / 2) * COL_GAP, -ROW_GAP, "parent");
+  });
 
-  const childrenMidX = spouse ? spouseX / 2 : 0;
+  const childrenMidX = (spouses.length * COL_GAP) / 2;
   const childrenStartX = childrenMidX - ((children.length - 1) * COL_GAP) / 2;
   children.forEach((child, index) => {
-    placed.push({ person: child, x: childrenStartX + index * COL_GAP, y: ROW_GAP, role: getRelationLabel("child", child), isFocus: false });
+    place(child, childrenStartX + index * COL_GAP, ROW_GAP, "child");
   });
 
   const minX = Math.min(...placed.map((node) => node.x));
@@ -162,46 +172,111 @@ export function buildFamilyTreeLayout(
   const offsetY = MARGIN + NODE_SIZE / 2 - minY;
 
   const nodes: FamilyTreeLayoutNode[] = placed.map((node) => ({ ...node, x: node.x + offsetX, y: node.y + offsetY }));
-  const positionOf = new Map(nodes.map((node) => [node.person.id, { x: node.x, y: node.y }]));
+  const positionOf = new Map(nodes.map((node) => [node.person.id, node]));
   const radius = NODE_SIZE / 2;
   const links: FamilyTreeLayoutLink[] = [];
 
-  const connectDown = (parentPeople: FamilyPerson[], childPeople: FamilyPerson[], keyPrefix: string) => {
-    const parentPositions = parentPeople.map((p) => positionOf.get(p.id)).filter((v): v is { x: number; y: number } => Boolean(v));
-    const childPositions = childPeople.map((p) => positionOf.get(p.id)).filter((v): v is { x: number; y: number } => Boolean(v));
-    if (!parentPositions.length || !childPositions.length) return;
-    const parentY = Math.max(...parentPositions.map((p) => p.y));
-    const anchorX = parentPositions.reduce((t, p) => t + p.x, 0) / parentPositions.length;
-    const childY = Math.min(...childPositions.map((p) => p.y));
-    const busY = (parentY + childY) / 2;
-    if (parentPositions.length >= 2) {
-      const sorted = [...parentPositions].sort((a, b) => a.x - b.x);
-      const left = sorted[0];
-      const right = sorted[sorted.length - 1];
-      links.push({ key: keyPrefix + "-couple", d: "M " + (left.x + radius - 10) + " " + left.y + " H " + (right.x - radius + 10) });
-    }
-    links.push({ key: keyPrefix + "-drop", d: "M " + anchorX + " " + (parentY + radius - 8) + " V " + busY });
-    const minChildX = Math.min(...childPositions.map((p) => p.x));
-    const maxChildX = Math.max(...childPositions.map((p) => p.x));
-    if (childPositions.length > 1) links.push({ key: keyPrefix + "-bus", d: "M " + minChildX + " " + busY + " H " + maxChildX });
-    childPositions.forEach((p, i) => {
-      links.push({ key: keyPrefix + "-branch-" + i, d: "M " + p.x + " " + busY + " V " + (p.y - radius + 8) });
-    });
-  };
-
-  connectDown(parents, [focus, ...siblings], "ancestors");
-
-  if (spouse) {
-    const fp = positionOf.get(focus.id);
-    const sp = positionOf.get(spouse.id);
-    if (fp && sp) {
-      const left = fp.x <= sp.x ? fp : sp;
-      const right = fp.x <= sp.x ? sp : fp;
-      links.push({ key: "spouse-link", d: "M " + (left.x + radius - 10) + " " + left.y + " H " + (right.x - radius + 10) });
+  // Marriage is a recorded relationship, not something inferred from sharing a child.
+  const coupleAnchors = new Map<string, { x: number; y: number }>();
+  const spouseRelationships = family.relationships.filter((relationship) => relationship.type === "spouse");
+  for (const relationship of spouseRelationships) {
+    const first = positionOf.get(relationship.fromPersonId);
+    const second = positionOf.get(relationship.toPersonId);
+    if (!first || !second || first === second || first.y !== second.y) continue;
+    const pairKey = JSON.stringify([first.person.id, second.person.id].sort());
+    if (coupleAnchors.has(pairKey)) continue;
+    const [left, right] = first.x < second.x ? [first, second] : [second, first];
+    const between = nodes
+      .filter((node) => node.y === left.y && node.x > left.x && node.x < right.x)
+      .sort((a, b) => a.x - b.x);
+    if (!between.length) {
+      links.push({ key: `spouse:${pairKey}`, d: `M ${left.x + radius - 10} ${left.y} H ${right.x - radius + 10}` });
+      coupleAnchors.set(pairKey, { x: (left.x + right.x) / 2, y: left.y });
+    } else {
+      // A second spouse must not be joined through the card of the first spouse.
+      // Route above the row; descend through the last gap, never through a person.
+      const laneY = left.y - radius - 14 - (30 * coupleAnchors.size) / (spouseRelationships.length + 1);
+      links.push({
+        key: `spouse:${pairKey}`,
+        d: `M ${left.x} ${left.y - radius + 8} V ${laneY} H ${right.x} V ${right.y - radius + 8}`,
+      });
+      coupleAnchors.set(pairKey, { x: (between[between.length - 1].x + right.x) / 2, y: laneY });
     }
   }
 
-  connectDown(spouse ? [focus, spouse] : [focus], children, "descendants");
+  const parentIdsByChild = new Map<string, Set<string>>();
+  for (const relationship of family.relationships) {
+    if (relationship.type !== "parent") continue;
+    const parentIds = parentIdsByChild.get(relationship.toPersonId) ?? new Set<string>();
+    parentIds.add(relationship.fromPersonId);
+    parentIdsByChild.set(relationship.toPersonId, parentIds);
+  }
+
+  function connectChildren(childPeople: FamilyPerson[], prefix: string) {
+    const groups = new Map<string, { parents: FamilyTreeLayoutNode[]; children: FamilyTreeLayoutNode[] }>();
+    for (const person of childPeople) {
+      const child = positionOf.get(person.id);
+      if (!child) continue;
+      const actualParents = [...(parentIdsByChild.get(person.id) ?? [])]
+        .sort()
+        .map((id) => positionOf.get(id))
+        .filter((parent): parent is FamilyTreeLayoutNode => Boolean(parent && parent.y < child.y));
+      if (!actualParents.length) continue;
+      const key = JSON.stringify(actualParents.map((parent) => parent.person.id));
+      const group = groups.get(key) ?? { parents: actualParents, children: [] };
+      group.children.push(child);
+      groups.set(key, group);
+    }
+
+    // Only children with the exact same recorded, visible parents share a bus.
+    // This keeps half siblings and children from different marriages separate.
+    [...groups.entries()].forEach(([parentKey, group], groupIndex) => {
+      const keyPrefix = groupIndex === 0 ? prefix : `${prefix}-${groupIndex}`;
+      const parentY = Math.max(...group.parents.map((parent) => parent.y));
+      const childY = Math.min(...group.children.map((child) => child.y));
+      const busY = parentY + radius + ((childY - parentY - NODE_SIZE) * (groupIndex + 1)) / (groups.size + 1);
+      const couple = group.parents.length === 2 ? coupleAnchors.get(parentKey) : undefined;
+      const sourceXs: number[] = [];
+
+      if (couple) {
+        // Preserve the continuous drop from the actual spouse line.
+        links.push({ key: `${keyPrefix}-drop`, d: `M ${couple.x} ${couple.y} V ${busY}` });
+        sourceXs.push(couple.x);
+      } else {
+        group.parents.forEach((parent, index) => {
+          const key = group.parents.length === 1 ? `${keyPrefix}-drop` : `${keyPrefix}-parent-${index}`;
+          links.push({ key, d: `M ${parent.x} ${parent.y + radius - 8} V ${busY}` });
+          sourceXs.push(parent.x);
+        });
+      }
+
+      const busXs = [...sourceXs, ...group.children.map((child) => child.x)];
+      const minBusX = Math.min(...busXs);
+      const maxBusX = Math.max(...busXs);
+      if (minBusX !== maxBusX) {
+        links.push({ key: `${keyPrefix}-bus`, d: `M ${minBusX} ${busY} H ${maxBusX}` });
+      }
+      group.children.forEach((child, index) => {
+        links.push({ key: `${keyPrefix}-branch-${index}`, d: `M ${child.x} ${busY} V ${child.y - radius + 8}` });
+      });
+    });
+  }
+
+  connectChildren([focus, ...siblings], "ancestors");
+  connectChildren(children, "descendants");
+
+  const siblingKeys = new Set<string>();
+  for (const relationship of family.relationships) {
+    if (relationship.type !== "sibling") continue;
+    const [from, to] = [relationship.fromPersonId, relationship.toPersonId].sort();
+    const source = positionOf.get(from);
+    const target = positionOf.get(to);
+    const key = `sibling:${JSON.stringify([from, to])}`;
+    if (!source || !target || source === target || siblingKeys.has(key)) continue;
+    siblingKeys.add(key);
+    const laneY = Math.max(source.y, target.y) + radius + 20;
+    links.push({ key, type: "sibling", relationshipKeys: [key], d: `M ${source.x} ${source.y + radius} V ${laneY} H ${target.x} V ${target.y + radius}` });
+  }
 
   return {
     nodes,

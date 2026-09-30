@@ -1,6 +1,7 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { requireFamilyRole } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
 import { updatePersonInFamily } from "@/lib/family-repository";
 import { assertSameOrigin, parseUpdatePersonInput } from "@/lib/request-validation";
 
@@ -8,7 +9,7 @@ type RouteContext = {
   params: Promise<{ slug: string; personId: string }>;
 };
 
-export async function PATCH(request: Request, context: RouteContext) {
+async function handlePATCH(request: Request, context: RouteContext) {
   const { slug, personId } = await context.params;
 
   try {
@@ -20,22 +21,21 @@ export async function PATCH(request: Request, context: RouteContext) {
       personId,
       payload,
       `${access.user.firstName} ${access.user.lastName}`,
+      access.user.id,
     );
 
     return NextResponse.json({
       message: `${person.firstName} ${person.lastName} обновлен(а).`,
       personId: person.id,
+      version: person.version,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось обновить карточку человека.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось обновить карточку человека.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
+
+export const PATCH = withObservedRoute("/api/family/[slug]/people/[personId]", handlePATCH);

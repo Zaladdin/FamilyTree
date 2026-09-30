@@ -1,14 +1,17 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
 import { createSession, registerUser, setSessionCookie } from "@/lib/auth";
 import { HttpError } from "@/lib/http-error";
+import { authErrorMessage } from "@/lib/auth-error";
 import {
   assertSameOrigin,
   parseAuthFormField,
   parseAuthPassword,
 } from "@/lib/request-validation";
 import { enforceRateLimit, getClientIp } from "@/lib/rate-limit";
+import { getRequestOrigin } from "@/lib/request-origin";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     assertSameOrigin(request);
 
@@ -40,19 +43,18 @@ export async function POST(request: Request) {
       password,
     });
 
-    const session = await createSession(user.id);
+    const session = await createSession(user.id, user.sessionVersion);
     await setSessionCookie(session.token, session.expiresAt);
 
-    return NextResponse.redirect(new URL("/onboarding/family", request.url), 303);
+    return NextResponse.redirect(new URL("/account", getRequestOrigin(request)), 303);
   } catch (error) {
-    const message =
-      error instanceof HttpError || error instanceof Error
-        ? error.message
-        : "Не удалось создать аккаунт.";
+    const message = authErrorMessage(error, "Не удалось создать аккаунт. Попробуйте позже.");
 
     return NextResponse.redirect(
-      new URL(`/register?error=${encodeURIComponent(message)}`, request.url),
+      new URL(`/register?error=${encodeURIComponent(message)}`, getRequestOrigin(request)),
       303,
     );
   }
 }
+
+export const POST = withObservedRoute("/api/auth/register", handlePOST);

@@ -98,7 +98,7 @@ export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProp
                   ) : null}
                 </div>
 
-                <p>{person.biography}</p>
+                <p className="user-text">{person.biography}</p>
 
                 <div className="archive-meta">
                   <span>{person.birthDate}</span>

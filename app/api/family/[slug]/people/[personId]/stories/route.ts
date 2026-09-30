@@ -1,14 +1,15 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { requireFamilyRole } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
-import { createStoryForPerson } from "@/lib/family-repository";
+import { createStoryForPerson } from "@/lib/family-story-repository";
 import { assertSameOrigin, parseCreateStoryInput } from "@/lib/request-validation";
 
 type RouteContext = {
   params: Promise<{ slug: string; personId: string }>;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+async function handlePOST(request: Request, context: RouteContext) {
   const { slug, personId } = await context.params;
 
   try {
@@ -22,23 +23,22 @@ export async function POST(request: Request, context: RouteContext) {
       body: payload.body,
       narrator: payload.narrator,
       actorName: `${access.user.firstName} ${access.user.lastName}`,
+      actorUserId: access.user.id,
     });
 
     return NextResponse.json({
       message: `История "${story.title}" добавлена.`,
       storyId: story.id,
+      personId,
+      version: story.version,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось сохранить историю.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось сохранить историю.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
+
+export const POST = withObservedRoute("/api/family/[slug]/people/[personId]/stories", handlePOST);

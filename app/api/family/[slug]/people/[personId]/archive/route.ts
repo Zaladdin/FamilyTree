@@ -1,6 +1,7 @@
+import { withObservedRoute } from "@/lib/observability";
 import { NextResponse } from "next/server";
+import { familyWriteErrorResponse } from "@/lib/family-write-error";
 import { requireFamilyRole } from "@/lib/auth";
-import { HttpError } from "@/lib/http-error";
 import { archivePersonInFamily } from "@/lib/family-repository";
 import { assertSameOrigin } from "@/lib/request-validation";
 
@@ -8,7 +9,7 @@ type RouteContext = {
   params: Promise<{ slug: string; personId: string }>;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+async function handlePOST(request: Request, context: RouteContext) {
   const { slug, personId } = await context.params;
 
   try {
@@ -17,6 +18,7 @@ export async function POST(request: Request, context: RouteContext) {
     await archivePersonInFamily({
       slug,
       personId,
+      actorUserId: access.user.id,
       actorName: `${access.user.firstName} ${access.user.lastName}`,
     });
 
@@ -25,15 +27,12 @@ export async function POST(request: Request, context: RouteContext) {
       personId,
     });
   } catch (error) {
-    const status = error instanceof HttpError ? error.status : 400;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Не удалось архивировать человека.",
-      },
-      { status },
-    );
+    const response = familyWriteErrorResponse(error, {
+      fallback: "Не удалось архивировать человека.",
+      invalidJson: "Некорректные данные запроса.",
+    });
+    return NextResponse.json(response.body, { status: response.status });
   }
 }
+
+export const POST = withObservedRoute("/api/family/[slug]/people/[personId]/archive", handlePOST);

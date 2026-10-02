@@ -60,6 +60,19 @@ function personCard(node: FamilyTreeLayoutNode, isRoot = false, showRootCaption 
   const nameHeight = (lines.length - 1) * lineHeight;
   const initials = `${Array.from(node.person.firstName)[0] ?? ""}${Array.from(node.person.lastName)[0] ?? ""}`;
   const date = [node.person.birthDate, node.person.deathDate].filter(Boolean).join(" - ");
+  if (node.width && node.height) {
+    const left = -node.width / 2;
+    const top = -node.height / 2;
+    const name = wrapText(fullName, 19, 2);
+    return `<g data-person-id="${escapeXml(node.person.id)}" data-x="${node.x}" data-y="${node.y}" data-is-root="${isRoot}" data-is-focus="${node.isFocus}" data-card-shape="rectangle" transform="translate(${node.x} ${node.y})">
+<title>${escapeXml(fullName)}</title>
+<rect x="${left}" y="${top}" width="${node.width}" height="${node.height}" rx="8" fill="#fffdf8" stroke="${node.isFocus ? "#a33b36" : "#ded9ce"}" stroke-width="${node.isFocus ? 2 : 1}"/>
+<circle cx="${left + 33}" cy="0" r="21" fill="#eae3d6"/>
+<text x="${left + 33}" y="5" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="${INK}">${escapeXml(initials)}</text>
+<text x="${left + 64}" y="-13" font-family="Arial, sans-serif" font-size="12" fill="${INK}">${name.map((line, index) => `<tspan x="${left + 64}" dy="${index ? 15 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>
+<text x="${left + 64}" y="25" font-family="Arial, sans-serif" font-size="9" fill="#6c6a62">${escapeXml(wrapText(date, 26, 1).join(""))}</text>
+</g>`;
+  }
   const dateLines = wrapText(date, compact ? 22 : 32, 1);
   const isFocus = node.isFocus;
   const badgeRadius = compact ? 14 : 21;
@@ -131,10 +144,10 @@ export function buildFamilyTreeExport(family: Family, layout: FamilyTreeLayout, 
     .map((node) => style === "tree" ? { ...node, y: source.height - node.y, isFocus: node.person.id === branch?.focusPersonId } : node);
   const visibleIds = new Set(nodes.map((node) => node.person.id));
   const rootIds = new Set(branch?.rootIds ?? []);
-  const left = Math.min(0, ...nodes.map((node) => node.x - (node.size ?? 188) / 2 - 40));
-  const top = Math.min(0, ...nodes.map((node) => node.y - (node.size ?? 188) / 2 - 40));
-  const diagramWidth = Math.max(600, Number.isFinite(source.width) ? source.width : 0, ...nodes.map((node) => node.x + (node.size ?? 188) / 2 + 40)) - left;
-  const diagramHeight = Math.max(400, Number.isFinite(source.height) ? source.height : 0, ...nodes.map((node) => node.y + (node.size ?? 188) / 2 + 40)) - top;
+  const left = Math.min(0, ...nodes.map((node) => node.x - (node.width ?? node.size ?? 188) / 2 - 40));
+  const top = Math.min(0, ...nodes.map((node) => node.y - (node.height ?? node.size ?? 188) / 2 - 40));
+  const diagramWidth = Math.max(600, Number.isFinite(source.width) ? source.width : 0, ...nodes.map((node) => node.x + (node.width ?? node.size ?? 188) / 2 + 40)) - left;
+  const diagramHeight = Math.max(400, Number.isFinite(source.height) ? source.height : 0, ...nodes.map((node) => node.y + (node.height ?? node.size ?? 188) / 2 + 40)) - top;
   const width = Math.max(1100, diagramWidth + 120);
   const height = Math.max(960, diagramHeight + 390);
   const diagramX = (width - diagramWidth) / 2 - left;

@@ -170,6 +170,8 @@ test("pyramid export places ancestors above descendants and uses the chosen bran
   assert.equal(nodes.get("child")!.y, nodes.get("sibling")!.y);
   assert.match(nodes.get("child")!.attributes, /data-is-focus="true"/);
   assert.match(svg, /data-decoration="pyramid"/);
+  assert.equal((svg.match(/data-card-shape="rectangle"/g) ?? []).length, peopleCount);
+  assert.doesNotMatch(svg.match(/<g data-recorded-links="true">([\s\S]*?)<\/g>/)?.[1] ?? "", / Q | C /);
   assert.match(svg, /Пирамида · Старшие предки сверху · Потомки ниже/);
   assert.doesNotMatch(svg, /botanical-tree|Семейный круг|scale\(1 -1\)|КОРНИ СЕМЬИ/);
   const spouse = buildFamilyTreeExport(family, layout, "pyramid", "spouse");

@@ -45,11 +45,11 @@ export function fitTreeViewport(
     // Include all decorative bands and any manually moved circles in the fit.
     const nodes = diagram.nodes?.filter((node) => Number.isFinite(node.x) && Number.isFinite(node.y)) ?? [];
     const halfWidth = Math.max(...pyramidLevels.map((level) => level.halfWidth));
-    const left = Math.min(diagram.width / 2 - halfWidth, ...nodes.map((node) => node.x - (node.size ?? diagram.nodeSize) / 2));
-    const right = Math.max(diagram.width / 2 + halfWidth, ...nodes.map((node) => node.x + (node.size ?? diagram.nodeSize) / 2));
+    const left = Math.min(diagram.width / 2 - halfWidth, ...nodes.map((node) => node.x - (node.width ?? node.size ?? diagram.nodeSize) / 2));
+    const right = Math.max(diagram.width / 2 + halfWidth, ...nodes.map((node) => node.x + (node.width ?? node.size ?? diagram.nodeSize) / 2));
     // buildFamilyPyramidLayout anchors the decorative apex at scene y=48.
-    const top = Math.min(48, ...nodes.map((node) => node.y - (node.size ?? diagram.nodeSize) / 2));
-    const bottom = Math.max(...pyramidLevels.map((level) => level.y), ...nodes.map((node) => node.y + (node.size ?? diagram.nodeSize) / 2));
+    const top = Math.min(48, ...nodes.map((node) => node.y - (node.height ?? node.size ?? diagram.nodeSize) / 2));
+    const bottom = Math.max(...pyramidLevels.map((level) => level.y), ...nodes.map((node) => node.y + (node.height ?? node.size ?? diagram.nodeSize) / 2));
     const fittedScale = Math.min(1, (viewport.width - 48) / Math.max(right - left, diagram.nodeSize), (viewport.height - 112) / Math.max(bottom - top, diagram.nodeSize));
     const scale = normalizeTreeScale(Math.floor(fittedScale * SCALE_PRECISION) / SCALE_PRECISION);
     return {
@@ -57,6 +57,17 @@ export function fitTreeViewport(
       x: viewport.width / 2 - (left + right) / 2 * scale,
       y: viewport.height / 2 - (top + bottom) / 2 * scale,
     };
+  }
+  if (diagram.nodes?.some(node => node.width !== undefined)) {
+    const nodes = diagram.nodes.filter(node => Number.isFinite(node.x) && Number.isFinite(node.y));
+    if (nodes.length) {
+      const left = Math.min(...nodes.map(node => node.x - (node.width ?? diagram.nodeSize) / 2));
+      const right = Math.max(...nodes.map(node => node.x + (node.width ?? diagram.nodeSize) / 2));
+      const top = Math.min(...nodes.map(node => node.y - (node.height ?? diagram.nodeSize) / 2));
+      const bottom = Math.max(...nodes.map(node => node.y + (node.height ?? diagram.nodeSize) / 2));
+      const scale = normalizeTreeScale(Math.floor(Math.min(1, (viewport.width - 48) / Math.max(1, right - left), (viewport.height - 112) / Math.max(1, bottom - top)) * SCALE_PRECISION) / SCALE_PRECISION);
+      return { scale, x: viewport.width / 2 - (left + right) / 2 * scale, y: (viewport.height - 40) / 2 - (top + bottom) / 2 * scale };
+    }
   }
   // The layout reserves 150px around its nodes. Leave room for the canvas legend.
   const contentWidth = Math.max(diagram.width - 300, diagram.nodeSize);
@@ -86,14 +97,15 @@ export function focusTreeViewport(
   const node = diagram.nodes.find((candidate) => candidate.person.id === focusPersonId);
   if (!node) return fitTreeViewport(viewport, diagram);
 
-  const nodeSize = node.size ?? diagram.nodeSize;
+  const nodeWidth = node.width ?? node.size ?? diagram.nodeSize;
+  const nodeHeight = node.height ?? node.size ?? diagram.nodeSize;
   const usableHeight = viewport.height - 40;
   // Fit this card, not its relatives: selecting a person must zoom back in even
   // when the complete family needs a much smaller overview scale.
   const fittedScale = Math.min(
     normalizeTreeScale(preferredScale),
-    (viewport.width - 48) / nodeSize,
-    (usableHeight - 112) / nodeSize,
+    (viewport.width - 48) / nodeWidth,
+    (usableHeight - 112) / nodeHeight,
   );
   const scale = normalizeTreeScale(Math.floor(fittedScale * SCALE_PRECISION) / SCALE_PRECISION);
 

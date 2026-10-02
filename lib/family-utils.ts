@@ -96,6 +96,9 @@ export type FamilyTreeLayoutNode = {
   role: string;
   isFocus: boolean;
   size?: number;
+  /** Explicit card bounds in non-radial views; size remains the circle fallback. */
+  width?: number;
+  height?: number;
   isContext?: boolean;
 };
 
@@ -107,6 +110,8 @@ export type FamilyTreeLayout = {
   width: number;
   height: number;
   nodeSize: number;
+  connectionStyle?: "orthogonal";
+  orientation?: "vertical" | "horizontal";
 };
 
 const NODE_SIZE = 188;

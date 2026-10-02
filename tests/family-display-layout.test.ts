@@ -165,3 +165,46 @@ test("pyramid display is opt-in, keeps kinship and preserves filtering through r
   assert.deepEqual(representedRelationships(close), representedRelationships(buildFamilyDisplayLayout(family, "focus", true)));
   assert.deepEqual(buildFamilyDisplayLayout(family, "missing", true, undefined, "pyramid"), buildFamilyDisplayLayout(family, null, false, undefined, "pyramid"));
 });
+
+for (const mode of ["generations", "horizontal"] as const) {
+  test(`${mode} aligns generations, preserves relationships and filters deterministically`, () => {
+    const family = fixture();
+    const layout = buildFamilyDisplayLayout(family, null, false, undefined, mode);
+    const axis = mode === "horizontal" ? "x" : "y";
+    const byId = new Map(layout.nodes.map((node) => [node.person.id, node]));
+    assert.equal(byId.get("father")![axis], byId.get("mother")![axis]);
+    assert.ok(byId.get("father")![axis] < byId.get("focus")![axis]);
+    assert.equal("pyramidOutline" in layout, false);
+    assert.deepEqual(representedRelationships(layout), family.relationships.map(relationshipKey).sort());
+    for (const link of layout.links) {
+      const values = link.d.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+      assert.ok(values.every(Number.isFinite));
+      assert.ok(!/[QC]/.test(link.d));
+      if (link.type === "parent") for (const key of link.relationshipKeys!) {
+        const [, childId] = JSON.parse(key.slice(key.indexOf(":") + 1)) as string[];
+        const child = byId.get(childId)!;
+        const port = mode === "horizontal" ? `${child.x - child.width! / 2} ${child.y}` : `${child.x} ${child.y - child.height! / 2}`;
+        assert.ok(link.d.includes(port), "every recorded child has a card-edge connector");
+      }
+    }
+    assert.deepEqual(coordinates(layout), coordinates(buildFamilyDisplayLayout({ ...family, people: [...family.people].reverse(), relationships: [...family.relationships].reverse() }, null, false, undefined, mode)));
+    const close = buildFamilyDisplayLayout(family, "focus", true, undefined, mode);
+    assert.deepEqual(representedRelationships(close), representedRelationships(buildFamilyDisplayLayout(family, "focus", true)));
+    assert.ok(close.nodes.every((node) => node.size === 188));
+    assert.deepEqual(coordinates(close), coordinates(buildFamilyDisplayLayout(family, "focus", true, undefined, mode)));
+    assert.deepEqual(buildFamilyDisplayLayout(family, "missing", true, undefined, mode), layout);
+    assert.ok(layout.nodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y)
+      && node.x >= node.width! / 2 && node.x + node.width! / 2 <= layout.width
+      && node.y >= node.height! / 2 && node.y + node.height! / 2 <= layout.height));
+    const rows = new Map<number, number[]>();
+    const crossAxis = mode === "horizontal" ? "y" : "x";
+    for (const node of layout.nodes) rows.set(node[axis], [...(rows.get(node[axis]) ?? []), node[crossAxis]]);
+    for (const positions of rows.values()) {
+      positions.sort((a, b) => a - b);
+      for (let index = 1; index < positions.length; index++) assert.equal(positions[index] - positions[index - 1], mode === "horizontal" ? 160 : 284);
+    }
+    const empty = buildFamilyDisplayLayout({ ...family, people: [], relationships: [] }, null, false, undefined, mode);
+    assert.equal(empty.width, 0);
+    assert.equal(empty.nodes.length, 0);
+  });
+}

@@ -1,6 +1,5 @@
 import { notFound, redirect } from "next/navigation";
 import { FamilyApp } from "@/components/family-app";
-import { SiteHeader } from "@/components/site-header";
 import {
   getCurrentUser,
   getFamilyRoleForUserId,
@@ -48,8 +47,7 @@ export default async function FamilyPage({
     : null;
 
   return (
-    <main className="page-shell">
-      <SiteHeader compact />
+    <main className="family-workspace-page">
       <FamilyApp canEdit={canEdit} initialFamily={family} initialFocusPersonId={focusPersonId} />
     </main>
   );

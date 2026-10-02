@@ -58,6 +58,23 @@ function renderedPeople(markup: string) {
   return tags(markup, "button").filter((tag) => attr(tag, "data-person-id") !== undefined);
 }
 
+test("archive desk retains working navigation and account actions without exposing private routes in demo", () => {
+  for (const demo of [false, true]) {
+    const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
+      family: fixtureFamily(), focusPersonId: "timur", canEdit: false, canvasScale: 1, demo,
+    }));
+    const hrefs = tags(markup, "a").map((tag) => attr(tag, "href"));
+    assert.ok(hrefs.includes("#photo-panel") && hrefs.includes("#people-panel"));
+    assert.equal(hrefs.includes("/account"), !demo);
+    assert.equal(hrefs.includes("/families"), !demo);
+    assert.equal(hrefs.includes("/register"), demo);
+    const logout = tags(markup, "form").find((tag) => attr(tag, "action") === "/api/auth/logout");
+    assert.equal(Boolean(logout), !demo);
+    if (logout) assert.equal(attr(logout, "method"), "post");
+    assert.ok(markup.includes('class="tree-bottom-controls"'));
+  }
+});
+
 function visibilityCheckbox(markup: string) {
   const inputs = tags(markup, "input");
   assert.equal(inputs.filter((tag) => attr(tag, "type") === "radio").length, 0);
@@ -104,24 +121,26 @@ test("tree offers export, reset positions and keyboard move instructions without
   assert.ok(markup.includes("Shift + стрелки"));
 });
 
-test("view controls offer circle and pyramid without removing the existing circle or single visibility checkbox", () => {
+test("view controls offer four layouts without removing the existing circle or single visibility checkbox", () => {
   const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
     family: fixtureFamily(), focusPersonId: "timur", canEdit: false, canvasScale: 1,
   }));
   const controls = markup.match(/<div\b[^>]*role="group"[^>]*aria-label="Вид дерева"[\s\S]*?<\/div>/)?.[0];
   assert.ok(controls, "the view switch needs an accessible group label");
   const buttons = tags(controls, "button");
-  assert.equal(buttons.length, 2);
+  assert.equal(buttons.length, 4);
   assert.ok(controls.includes("Круг"));
   assert.ok(controls.includes("Пирамида"));
-  assert.deepEqual(buttons.map((tag) => attr(tag, "aria-pressed")), ["true", "false"]);
+  assert.ok(controls.includes("Поколения"));
+  assert.ok(controls.includes("Слева направо"));
+  assert.deepEqual(buttons.map((tag) => attr(tag, "aria-pressed")), ["false", "false", "true", "false"]);
   assert.ok(buttons.every((tag) => attr(tag, "type") === "button"));
   assert.equal(renderedPeople(markup).length, 8);
-  assert.match(markup, /data-tree-layout="radial"/);
+  assert.match(markup, /data-tree-layout="generations"/);
   visibilityCheckbox(markup);
 });
 
-test("SSR defaults to all eight people with two compact relatives and one accessible selection", () => {
+test("SSR defaults to all eight people in generation cards with one accessible selection", () => {
   const family = fixtureFamily();
   const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
     family, focusPersonId: "timur", canEdit: false, canvasScale: 1,
@@ -129,11 +148,11 @@ test("SSR defaults to all eight people with two compact relatives and one access
   const people = renderedPeople(markup);
   assert.equal(people.length, 8);
   assert.deepEqual(people.map((tag) => attr(tag, "data-person-id")).sort(), family.people.map((person) => person.id).sort());
-  const compact = people.filter((tag) => hasClass(tag, "is-context"));
-  assert.deepEqual(compact.map((tag) => attr(tag, "data-person-id")).sort(), ["magomed", "zalikha"]);
-  for (const tag of compact) {
+  for (const tag of people) {
     const width = Number(attr(tag, "style")?.match(/(?:^|;)width:([\d.]+)px/)?.[1]);
-    assert.ok(width > 0 && width < 188, "context relatives should occupy smaller cards");
+    const height = Number(attr(tag, "style")?.match(/(?:^|;)height:([\d.]+)px/)?.[1]);
+    assert.ok(width > height, "generation cards are horizontal and compact");
+    assert.ok(hasClass(tag, "gene-node-card"));
   }
   const selected = people.filter((tag) => attr(tag, "aria-pressed") === "true");
   assert.equal(selected.length, 1);
@@ -247,20 +266,19 @@ test("SSR shows in-laws in both the tree and relatives panel for the selected pe
   }
 });
 
-test("SSR renders the circular tree with decorative orbits and distinct recorded relationship lines", () => {
+test("SSR renders generation cards with distinct recorded relationship lines", () => {
   const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
     family: fixtureFamily(), focusPersonId: "timur", canEdit: false, canvasScale: 1,
   }));
-  assert.ok(tags(markup, "div").some((tag) => attr(tag, "data-tree-layout") === "radial"));
-  assert.ok(renderedPeople(markup).every((tag) => hasClass(tag, "gene-node-round")));
-  assert.ok(tags(markup, "circle").some((tag) => hasClass(tag, "tree-orbit")));
+  assert.ok(tags(markup, "div").some((tag) => attr(tag, "data-tree-layout") === "generations"));
+  assert.ok(renderedPeople(markup).every((tag) => hasClass(tag, "gene-node-card")));
   const decoration = tags(markup, "svg").find((tag) => hasClass(tag, "tree-links-svg"));
   assert.ok(decoration);
   assert.equal(attr(decoration, "aria-hidden"), "true");
   const links = tags(markup, "path").filter((tag) => hasClass(tag, "tree-relation"));
   assert.ok(links.some((tag) => hasClass(tag, "is-parent")));
   assert.ok(links.some((tag) => hasClass(tag, "is-spouse")));
-  assert.ok(links.every((tag) => /[QC]/.test(attr(tag, "d") ?? "")), "connections must be curved rather than orthogonal buses");
+  assert.ok(links.every((tag) => /[LHV]/.test(attr(tag, "d") ?? "")), "generation connections use orthogonal family branches");
 });
 
 test("SSR distinguishes a direct sibling link from marriage and parenthood in the tree legend", () => {

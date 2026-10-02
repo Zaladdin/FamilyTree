@@ -64,6 +64,9 @@ type TreeNodeProps = {
   isFocus: boolean;
   isContext?: boolean;
   size: number;
+  width?: number;
+  height?: number;
+  rectangular?: boolean;
   relationPath?: string;
   onSelect?: (personId: string) => void;
   onMove?: (personId: string, delta: NodeOffset) => void;
@@ -91,15 +94,15 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function TreeNode({ person, role, isFocus, isContext = false, size, relationPath, onSelect, onMove }: TreeNodeProps) {
+function TreeNode({ person, role, isFocus, isContext = false, size, width, height, rectangular = false, relationPath, onSelect, onMove }: TreeNodeProps) {
   const photo = person.mediaAssets.find((asset) => asset.type === "photo");
   return (
     <button
-      className={`gene-node gene-node-round small interactive${isFocus ? " is-focus" : ""}${isContext ? " is-context" : ""}`}
+      className={`gene-node ${rectangular ? "gene-node-card" : "gene-node-round"} small interactive${isFocus ? " is-focus" : ""}${isContext ? " is-context" : ""}`}
       data-person-id={person.id}
       style={{
-        width: size,
-        height: size,
+        width: width ?? size,
+        height: height ?? size,
       }}
       aria-label={`${getPersonFullName(person)}${role ? `, ${role.toLowerCase()}` : ""}`}
       title={`${getPersonFullName(person)}${role ? ` — ${role}` : ""}${relationPath ? `\nСвязь: ${relationPath}` : ""}`}
@@ -160,7 +163,7 @@ export function FamilyWorkspace({
 }: FamilyWorkspaceProps) {
   const [search, setSearch] = useState("");
   const [hideOthers, setHideOthers] = useState(false);
-  const [displayMode, setDisplayMode] = useState<FamilyDisplayMode>("radial");
+  const [displayMode, setDisplayMode] = useState<FamilyDisplayMode>("generations");
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
@@ -194,7 +197,7 @@ export function FamilyWorkspace({
     [family, focusPerson?.id, activeMode, kinship, displayMode],
   );
   const branchKey = `${displayMode}:${activeMode}:${focusPerson?.id ?? "overview"}`;
-  const positionScope = JSON.stringify([family.id, displayMode, activeMode, displayMode === "pyramid" && activeMode === "all" ? null : focusPerson?.id ?? null]);
+  const positionScope = JSON.stringify([family.id, displayMode, activeMode, displayMode !== "radial" && activeMode === "all" ? null : focusPerson?.id ?? null]);
   const offsets = positionViews[positionScope];
   const layout = useMemo(() => repositionFamilyLayout(automaticLayout, offsets ?? {}, family.relationships), [automaticLayout, offsets, family.relationships]);
   // Circle export always uses its own remembered positions, even from pyramid view.
@@ -405,7 +408,7 @@ export function FamilyWorkspace({
     if (!state.moved && state.personId && state.scope === positionScope) {
       selectPerson(state.personId);
     } else if (state.moved && state.personId) {
-      setMoveMessage("Круг перемещён. Расположение сохраняется до перезагрузки страницы.");
+      setMoveMessage("Карточка перемещена. Расположение сохраняется до перезагрузки страницы.");
     }
   }
 
@@ -514,17 +517,11 @@ export function FamilyWorkspace({
   }
 
   return (
-    <section className="workspace-layout tree-mode">
-      <div className="workspace-heading">
-        <div>
-          <div className="eyebrow">Семейный архив / {demo ? "знакомство" : "моя семья"}</div>
-          <h1>{family.title}</h1>
-          <p>{family.region} <span aria-hidden="true">·</span> {family.people.length} {countNoun(family.people.length, "человек", "человека", "человек")}. Одна история.</p>
-        </div>
-        {canEdit ? <button className="primary-button" onClick={onOpenAddPerson} type="button">+ Добавить человека</button> : null}
-      </div>
+    <section className="workspace-layout tree-mode archive-desktop">
       <section className="tree-stage" id="tree-stage">
         <nav className="tree-dock" aria-label="Разделы семейного архива">
+          <Link className="workspace-brand" href="/"><TreeGlyph className="workspace-brand-icon" /><span><strong>Rodovo</strong><small>Семейные истории<br />имеют корни</small></span></Link>
+          <div className="workspace-family-name"><GroupGlyph className="dock-icon" /><span>{family.title}</span></div>
           <a className="tree-dock-item active" href="#tree-stage" aria-current="page">
             <TreeGlyph className="dock-icon" />
             <span>Дерево</span>
@@ -537,28 +534,30 @@ export function FamilyWorkspace({
             <GroupGlyph className="dock-icon" />
             <span>Воспоминания</span>
           </a>
+          <a className="tree-dock-item" href="#photo-panel"><svg className="dock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 6-6 4 4 3-3 5 5" /></svg><span>Фотоархив</span></a>
           {!demo ? <Link className="tree-dock-item" href={`/family/${family.slug}/journal`}>
             <BookGlyph className="dock-icon" />
             <span>Журнал</span>
           </Link> : null}
+          {!demo ? <Link className="tree-dock-item" href={`/family/${family.slug}/members`}><GroupGlyph className="dock-icon" /><span>Участники</span></Link> : null}
+          <div className="workspace-account">
+            {!demo ? <>
+              <Link className="tree-dock-item" href="/families"><GroupGlyph className="dock-icon" /><span>Мои семьи</span></Link>
+              <Link className="tree-dock-item" href="/account"><PersonGlyph className="dock-icon" /><span>Мой профиль</span></Link>
+              <form action="/api/auth/logout" method="post"><button className="tree-dock-item" type="submit">Выйти</button></form>
+            </> : <><Link className="tree-dock-item" href="/login">Войти</Link><Link className="tree-dock-item" href="/register">Создать свой архив</Link></>}
+          </div>
         </nav>
 
         <div className="tree-board">
+          <div className="tree-sticky-controls" role="region" aria-label="Управление деревом" tabIndex={0}>
           <div className="tree-board-header">
             <div>
-              <h2>{displayMode === "pyramid" ? "Пирамида семьи" : "Круг семьи"}</h2>
+              <h1>Семейное дерево</h1>
               <span className="workspace-count" role="status">
                 {activeMode === "close" ? `Близкие родственники · ${layout.nodes.length} из ${family.people.length}` : `Вся семья · ${family.people.length} ${countNoun(family.people.length, "человек", "человека", "человек")}`}
               </span>
-              <div className="tree-selection-options">
-                <label className="tree-hide-others" title="Оставить близких родственников: родителей, детей, супругов, братьев и сестёр, бабушек и дедушек, внуков, дядь и тёть, племянников и ближайшую родню по браку">
-                  <input type="checkbox" name="tree-hide-others" checked={Boolean(focusPerson) && hideOthers} disabled={!focusPerson} onChange={(event) => setHideOthers(event.target.checked)} />
-                  <span>Скрыть остальных</span>
-                </label>
-                {focusPerson ? <button className="tree-clear-selection" type="button" onClick={clearSelection} title="Вернуться к обзору всей семьи">
-                  <span aria-hidden="true">×</span> Снять выбор
-                </button> : null}
-              </div>
+
             </div>
             <div className="workspace-search">
               <label className="sr-only" htmlFor="person-search">Найти человека в семье</label>
@@ -567,59 +566,27 @@ export function FamilyWorkspace({
                 {matchedPeople.length ? matchedPeople.map((person) => <button type="button" key={person.id} onClick={() => selectPerson(person.id)}>{getPersonFullName(person)}<small>{person.birthDate}</small></button>) : <p>Никого не нашли. Попробуйте другое имя.</p>}
               </div> : null}
             </div>
-            <div className="tree-board-controls">
-              <button
-                aria-label="Уменьшить"
-                className="tree-control-button"
-                onClick={onZoomOut}
-                disabled={canvasScale <= TREE_MIN_SCALE}
-                type="button"
-              >
-                <ZoomOutGlyph className="tree-control-icon" />
-              </button>
-              <span className="tree-scale" aria-live="polite">{Math.round(canvasScale * 100)}%</span>
-              <button
-                aria-label="Увеличить"
-                className="tree-control-button"
-                onClick={onZoomIn}
-                disabled={canvasScale >= 1.4}
-                type="button"
-              >
-                <ZoomInGlyph className="tree-control-icon" />
-              </button>
-              <button
-                aria-label={activeMode === "close" ? "Уместить ветвь в окне" : "Уместить всю семью в окне"}
-                className="tree-control-button"
-                onClick={handleResetView}
-                type="button"
-              >
-                <ExpandGlyph className="tree-control-icon" />
-              </button>
-            </div>
+            {canEdit ? <button className="primary-button" onClick={onOpenAddPerson} type="button">+ Добавить человека</button> : null}
           </div>
 
           <div className="tree-arrangement-bar">
             <div className="tree-view-switch" role="group" aria-label="Вид дерева">
               <button type="button" aria-pressed={displayMode === "radial"} onClick={() => setDisplayMode("radial")}>Круг</button>
               <button type="button" aria-pressed={displayMode === "pyramid"} onClick={() => setDisplayMode("pyramid")}>Пирамида</button>
+              <button type="button" aria-pressed={displayMode === "generations"} onClick={() => setDisplayMode("generations")}>Поколения</button>
+              <button type="button" aria-pressed={displayMode === "horizontal"} onClick={() => setDisplayMode("horizontal")}>Слева направо</button>
             </div>
-            <p id="tree-move-help">Двигайте круги по отдельности, фон — для перемещения схемы. <span>Shift + стрелки — двигать круг с клавиатуры.</span></p>
+            <p id="tree-move-help">Двигайте карточки или фон схемы. <span>Shift + стрелки — перемещение карточки.</span></p>
             <div className="tree-arrangement-actions">
               <button className="ghost-button" type="button" disabled={!hasManualPositions} onClick={resetNodePositions}>Сбросить расположение</button>
               <button className="ghost-button tree-export-trigger" type="button" onClick={() => setExportOpen(true)}>Экспорт PNG / PDF</button>
             </div>
             <span className="sr-only" role="status">{moveMessage}</span>
           </div>
-          <TreeExportDialog family={family} layout={exportCircleLayout} open={exportOpen} onClose={() => setExportOpen(false)} />
 
-          <div className="tree-perspective">
-            <label htmlFor="tree-perspective-person">Родство относительно</label>
-            <select id="tree-perspective-person" value={focusPerson?.id ?? ""} onChange={(event) => event.target.value ? selectPerson(event.target.value) : clearSelection()}>
-              <option value="">Выберите человека</option>
-              {family.people.map((person) => <option key={person.id} value={person.id}>{getPersonFullName(person)}</option>)}
-            </select>
-            <span>{displayMode === "pyramid" ? `Старшие поколения — сверху, младшие — ниже. ${focusPerson ? "Подписи показывают родство с выбранным человеком." : "Выберите человека, чтобы увидеть названия родства."}` : focusPerson ? "Выбранный человек — в центре. Подписи показывают родство с ним." : "Выберите человека, чтобы увидеть названия родства."}</span>
+
           </div>
+          <TreeExportDialog family={family} layout={exportCircleLayout} open={exportOpen} onClose={() => setExportOpen(false)} />
 
           {feedbackMessage ? <div className="banner-success tree-banner" role="status">{feedbackMessage}</div> : null}
           {addPersonSheet}
@@ -687,8 +654,8 @@ export function FamilyWorkspace({
                       className="tree-node-anchor"
                       key={node.person.id}
                       style={{
-                        left: node.x - (node.size ?? layout.nodeSize) / 2,
-                        top: node.y - (node.size ?? layout.nodeSize) / 2,
+                        left: node.x - (node.width ?? node.size ?? layout.nodeSize) / 2,
+                        top: node.y - (node.height ?? node.size ?? layout.nodeSize) / 2,
                       }}
                     >
                       <TreeNode
@@ -697,6 +664,9 @@ export function FamilyWorkspace({
                         person={node.person}
                         role={node.role}
                         size={node.size ?? layout.nodeSize}
+                        width={node.width}
+                        height={node.height}
+                        rectangular={displayMode !== "radial"}
                         relationPath={relationPath(node.person.id)}
                         onSelect={selectPerson}
                         onMove={moveNodeWithKeyboard}
@@ -764,7 +734,9 @@ export function FamilyWorkspace({
                 <span>{focusPerson.birthDate}{focusPerson.deathDate ? ` — ${focusPerson.deathDate}` : ""}</span>
                 <span>{focusPerson.birthPlace}</span>
               </div>
-              <p className="tree-inspector-summary user-text">{focusPerson.biography || "История этого человека ещё не записана."}</p>
+              {canEdit ? <button className="ghost-button full-width" onClick={onOpenEditPerson} type="button">Редактировать</button> : null}
+              <nav className="inspector-section-nav" aria-label="Материалы выбранного человека"><a href="#person-about">О человеке</a><a href="#memory-panel">Истории</a><a href="#photo-panel">Медиа</a></nav>
+              <p className="tree-inspector-summary user-text" id="person-about">{focusPerson.biography || "История этого человека ещё не записана."}</p>
               {focusPerson.note ? <p className="note-box user-text">{focusPerson.note}</p> : null}
 
               <div className="metrics-grid compact">
@@ -807,9 +779,6 @@ export function FamilyWorkspace({
                     {onOpenAddRelationship ? <button className="ghost-button full-width" onClick={onOpenAddRelationship} type="button">
                       Связи человека
                     </button> : null}
-                    <button className="ghost-button full-width" onClick={onOpenEditPerson} type="button">
-                      Редактировать человека
-                    </button>
                     <button className="ghost-button full-width" onClick={onOpenUploadMedia} type="button">
                       Добавить фото или голос
                     </button>
@@ -830,6 +799,55 @@ export function FamilyWorkspace({
               </div>
             </aside> : null}
           </section>
+
+          <div className="tree-bottom-controls">
+            <div className="tree-board-controls">
+              <button
+                aria-label="Уменьшить"
+                className="tree-control-button"
+                onClick={onZoomOut}
+                disabled={canvasScale <= TREE_MIN_SCALE}
+                type="button"
+              >
+                <ZoomOutGlyph className="tree-control-icon" />
+              </button>
+              <span className="tree-scale" aria-live="polite">{Math.round(canvasScale * 100)}%</span>
+              <button
+                aria-label="Увеличить"
+                className="tree-control-button"
+                onClick={onZoomIn}
+                disabled={canvasScale >= 1.4}
+                type="button"
+              >
+                <ZoomInGlyph className="tree-control-icon" />
+              </button>
+              <button
+                aria-label={activeMode === "close" ? "Уместить ветвь в окне" : "Уместить всю семью в окне"}
+                className="tree-control-button"
+                onClick={handleResetView}
+                type="button"
+              >
+                <ExpandGlyph className="tree-control-icon" />
+              </button>
+            </div>
+              <div className="tree-selection-options">
+                <label className="tree-hide-others" title="Оставить близких родственников: родителей, детей, супругов, братьев и сестёр, бабушек и дедушек, внуков, дядь и тёть, племянников и ближайшую родню по браку">
+                  <input type="checkbox" name="tree-hide-others" checked={Boolean(focusPerson) && hideOthers} disabled={!focusPerson} onChange={(event) => setHideOthers(event.target.checked)} />
+                  <span>Скрыть остальных</span>
+                </label>
+                {focusPerson ? <button className="tree-clear-selection" type="button" onClick={clearSelection} title="Вернуться к обзору всей семьи">
+                  <span aria-hidden="true">×</span> Снять выбор
+                </button> : null}
+              </div>
+          <div className="tree-perspective">
+            <label htmlFor="tree-perspective-person">Родство относительно</label>
+            <select id="tree-perspective-person" value={focusPerson?.id ?? ""} onChange={(event) => event.target.value ? selectPerson(event.target.value) : clearSelection()}>
+              <option value="">Выберите человека</option>
+              {family.people.map((person) => <option key={person.id} value={person.id}>{getPersonFullName(person)}</option>)}
+            </select>
+            <span>{displayMode !== "radial" ? `${displayMode === "horizontal" ? "Старшие поколения — слева, младшие — справа." : "Старшие поколения — сверху, младшие — ниже."} ${focusPerson ? "Подписи показывают родство с выбранным человеком." : "Выберите человека, чтобы увидеть названия родства."}` : focusPerson ? "Выбранный человек — в центре. Подписи показывают родство с ним." : "Выберите человека, чтобы увидеть названия родства."}</span>
+          </div>
+          </div>
 
           <div className="tree-board-footer">
             <div className="tree-summary-pill">{family.region}</div>
@@ -885,7 +903,7 @@ export function FamilyWorkspace({
         </aside>
 
         {focusPerson ? <section className="detail-grid">
-          <article className="detail-card">
+          <article className="detail-card" id="photo-panel">
             <div className="eyebrow">Фотоархив</div>
             <h2>Моменты, которые остаются</h2>
             <div className="media-section">
@@ -980,6 +998,7 @@ export function FamilyWorkspace({
             </div>
           </article>
         </section> : <section className="detail-card family-overview-note" id="memory-panel">
+          <span id="photo-panel" />
           <div className="eyebrow">Обзор семьи</div>
           <h2>У каждого имени — своя история</h2>
           <p>Сейчас показано всё дерево. Выберите человека на схеме или в списке, чтобы открыть его фотографии, воспоминания и связи с близкими.</p>

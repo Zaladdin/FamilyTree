@@ -1,5 +1,6 @@
 import type { FamilyRelationship } from "@/lib/types";
 import type { FamilyTreeLayout, FamilyTreeLayoutNode } from "@/lib/family-utils";
+import { buildOrthogonalFamilyLinks } from "@/lib/family-orthogonal-links";
 
 export type NodeOffset = { x: number; y: number };
 export type NodeOffsets = Readonly<Record<string, NodeOffset>>;
@@ -15,10 +16,11 @@ export function screenDragOffset(origin: NodeOffset, delta: NodeOffset, scale: n
 
 export function constrainNodeOffset(node: FamilyTreeLayoutNode, layout: FamilyTreeLayout, offset: NodeOffset): NodeOffset {
   if (!finitePoint(offset)) return { x: 0, y: 0 };
-  const margin = (node.size ?? layout.nodeSize) / 2 + 24;
+  const marginX = (node.width ?? node.size ?? layout.nodeSize) / 2 + 24;
+  const marginY = (node.height ?? node.size ?? layout.nodeSize) / 2 + 24;
   return {
-    x: bound(node.x + offset.x, margin, Math.max(margin, layout.width - margin)) - node.x,
-    y: bound(node.y + offset.y, margin, Math.max(margin, layout.height - margin)) - node.y,
+    x: bound(node.x + offset.x, marginX, Math.max(marginX, layout.width - marginX)) - node.x,
+    y: bound(node.y + offset.y, marginY, Math.max(marginY, layout.height - marginY)) - node.y,
   };
 }
 
@@ -59,6 +61,9 @@ export function repositionFamilyLayout<T extends FamilyTreeLayout>(layout: T, of
     return { ...node, x: node.x + offset.x, y: node.y + offset.y };
   });
   if (!movedIds.size) return layout;
+  if (layout.connectionStyle === "orthogonal") {
+    return { ...layout, nodes, links: buildOrthogonalFamilyLinks(nodes, relationships, layout.orientation === "horizontal") };
+  }
   const byId = new Map(nodes.map((node) => [node.person.id, node]));
   const edges = new Map(relationships.map((edge) => [edgeKey(edge), edge]));
   return {

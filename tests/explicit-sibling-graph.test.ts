@@ -48,7 +48,7 @@ test("duplicate/reversed sibling facts remain deterministic and archived interme
   assert.equal(getFamilyKinship(data, "me").has("aunt"), false);
 });
 
-test("radial and pyramid retain canonical typed sibling lines with circle-border endpoints after dragging", () => {
+test("radial and pyramid retain canonical typed sibling lines at their respective card borders after dragging", () => {
   const data = fixture(["me", "father", "aunt"], [edge("parent", "father", "me"), edge("sibling", "father", "aunt"), edge("sibling", "aunt", "father")]);
   for (const build of [buildFamilyRadialLayout, buildFamilyPyramidLayout]) {
     const layout = build(data, "me");
@@ -61,9 +61,19 @@ test("radial and pyramid retain canonical typed sibling lines with circle-border
     assert.deepEqual(link.relationshipKeys, [link.key]);
     assert.notEqual(link.d, layout.links.find((item) => item.key === link.key)!.d);
     const coordinates = link.d.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
-    for (const [id, offset] of [["aunt", 0], ["father", 4]] as const) {
-      const node = moved.nodes.find((item) => item.person.id === id)!;
-      assert.ok(Math.abs(Math.hypot(coordinates[offset] - node.x, coordinates[offset + 1] - node.y) - node.size! / 2) < 0.01);
+    if (layout.connectionStyle === "orthogonal") {
+      assert.ok(!/[QC]/.test(link.d));
+      const endpoints = moved.nodes.filter(node => ["aunt", "father"].includes(node.person.id)).sort((a, b) => a.x - b.x);
+      assert.equal(coordinates[0], endpoints[0].x + endpoints[0].width! / 2);
+      assert.equal(coordinates[1], endpoints[0].y);
+      assert.equal(coordinates.at(-2), endpoints[1].x - endpoints[1].width! / 2);
+      assert.equal(coordinates.at(-1), endpoints[1].y);
+    } else {
+      assert.equal(coordinates.length, 6);
+      for (const [id, offset] of [["aunt", 0], ["father", 4]] as const) {
+        const node = moved.nodes.find((item) => item.person.id === id)!;
+        assert.ok(Math.abs(Math.hypot(coordinates[offset] - node.x, coordinates[offset + 1] - node.y) - node.size! / 2) < 0.01);
+      }
     }
   }
 });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildFamilyPyramidLayout } from "@/lib/family-pyramid-layout";
+import { buildFamilyGenerationRanks } from "@/lib/family-generation-ranks";
 import { repositionFamilyLayout } from "@/lib/family-node-positions";
 import { getFamilyBySlug } from "@/lib/mock-data";
 import type { Family, FamilyRelationship } from "@/lib/types";
@@ -14,6 +15,58 @@ function fixture(ids: string[], relationships: FamilyRelationship[] = []): Famil
 }
 
 const coordinates = (layout: ReturnType<typeof buildFamilyPyramidLayout>) => layout.nodes.map((node) => ({ id: node.person.id, x: node.x, y: node.y }));
+
+test("pyramid aligns co-parents and their ancestors despite unequal known ancestry", () => {
+  const family = fixture(["great", "grandfather", "grandmother", "father", "mother", "child"], [
+    parent("great", "grandfather"), parent("grandfather", "father"), parent("grandmother", "mother"),
+    parent("father", "child"), parent("mother", "child"),
+  ]);
+  const layout = buildFamilyPyramidLayout(family, "child");
+  const y = (id: string) => layout.nodes.find((node) => node.person.id === id)!.y;
+  assert.equal(y("father"), y("mother"));
+  assert.equal(y("grandfather"), y("grandmother"));
+  assert.ok(y("great") < y("grandfather"));
+  assert.ok(y("grandfather") < y("father"));
+  assert.ok(y("father") < y("child"));
+});
+
+test("pyramid aligns ancestral branches joined by siblings or spouses", () => {
+  for (const type of ["spouse", "sibling"] as const) {
+    const family = fixture(["great", "left-grand", "left", "right-grand", "right"], [
+      parent("great", "left-grand"), parent("left-grand", "left"), parent("right-grand", "right"),
+      { type, fromPersonId: "left", toPersonId: "right" },
+    ]);
+    const layout = buildFamilyPyramidLayout(family, null);
+    const y = (id: string) => layout.nodes.find((node) => node.person.id === id)!.y;
+    assert.equal(y("left"), y("right"));
+    assert.equal(y("left-grand"), y("right-grand"));
+    assert.ok(y("great") < y("left-grand"));
+  }
+});
+
+test("generation ranks keep half siblings and multiple co-parents aligned without inventing edges", () => {
+  const family = fixture(["grand", "father", "mother-a", "mother-b", "child-a", "child-b"], [
+    parent("grand", "father"), parent("father", "child-a"), parent("mother-a", "child-a"),
+    parent("father", "child-b"), parent("mother-b", "child-b"),
+  ]);
+  const ranks = buildFamilyGenerationRanks(family);
+  assert.equal(ranks.get("grand"), 0);
+  for (const id of ["father", "mother-a", "mother-b"]) assert.equal(ranks.get(id), 1);
+  for (const id of ["child-a", "child-b"]) assert.equal(ranks.get(id), 2);
+  assert.equal(buildFamilyPyramidLayout(family, null).links.flatMap(link => link.relationshipKeys!).length, family.relationships.length);
+});
+
+test("generation constraints remain finite and deterministic on long chains and contradictory cycles", () => {
+  const ids = Array.from({ length: 10000 }, (_, index) => `person-${index.toString().padStart(5, "0")}`);
+  const family = fixture(ids, ids.slice(1).map((id, index) => parent(ids[index], id)));
+  const ranks = buildFamilyGenerationRanks(family);
+  assert.equal(ranks.get(ids[0]), 0);
+  assert.equal(ranks.get(ids[9999]), 9999);
+  const cyclic = { ...family, relationships: [...family.relationships, parent(ids[9999], ids[0]), parent(ids[0], "unknown")] };
+  const cyclicRanks = buildFamilyGenerationRanks(cyclic);
+  assert.deepEqual(cyclicRanks, ranks);
+  assert.deepEqual(buildFamilyGenerationRanks({ ...cyclic, people: [...cyclic.people].reverse(), relationships: [...cyclic.relationships].reverse() }), ranks);
+});
 
 test("pyramid places oldest generations above children and widens every lower generation", () => {
   const family = fixture(["grandparent", "father", "mother", "me", "sibling"], [
@@ -75,8 +128,8 @@ test("pyramid preserves each canonical recorded edge once, including half siblin
   const layout = buildFamilyPyramidLayout(family, "a");
   assert.equal(layout.nodes.length, 9);
   const keys = edges.map((edge) => `${edge.type}:${JSON.stringify(edge.type === "spouse" ? [edge.fromPersonId, edge.toPersonId].sort() : [edge.fromPersonId, edge.toPersonId])}`).sort();
-  assert.deepEqual(layout.links.map((link) => link.key).sort(), keys);
-  assert.ok(layout.links.every((link) => link.relationshipKeys?.length === 1 && link.relationshipKeys[0] === link.key));
+  assert.deepEqual(layout.links.flatMap((link) => link.relationshipKeys!).sort(), keys);
+  assert.ok(layout.links.every((link) => link.relationshipKeys?.length && link.relationshipKeys[0] === link.key));
   for (const node of layout.nodes) {
     assert.ok(Number.isFinite(node.x) && Number.isFinite(node.y));
     assert.ok(node.x >= 94 && node.x <= layout.width - 94 && node.y >= 94 && node.y <= layout.height - 94);
@@ -84,27 +137,24 @@ test("pyramid preserves each canonical recorded edge once, including half siblin
   assert.deepEqual(buildFamilyPyramidLayout({ ...family, people: [...family.people].reverse(), relationships: [...family.relationships].reverse() }, "a"), layout);
 });
 
-test("pyramid curves clip to visible circles and manual dragging updates exact incident edges", () => {
+test("pyramid orthogonal buses retain child card ports after manual dragging", () => {
   const family = fixture(["me", "father", "wife", "wife-father"], [parent("father", "me"), spouse("me", "wife"), parent("wife-father", "wife")]);
   const base = buildFamilyPyramidLayout(family, "me");
   const moved = repositionFamilyLayout(base, { me: { x: 60, y: 30 } }, family.relationships);
-  for (const layout of [base, moved]) {
-    for (const link of layout.links) {
-      const numbers = link.d.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
-      assert.equal(numbers.length, 6);
-      assert.ok(numbers.every(Number.isFinite));
-      const [from, to] = JSON.parse(link.key.slice(link.key.indexOf(":") + 1));
-      const source = layout.nodes.find((node) => node.person.id === from)!;
-      const target = layout.nodes.find((node) => node.person.id === to)!;
-      assert.ok(Math.abs(Math.hypot(numbers[0] - source.x, numbers[1] - source.y) - source.size! / 2) < 0.01);
-      assert.ok(Math.abs(Math.hypot(numbers[4] - target.x, numbers[5] - target.y) - target.size! / 2) < 0.01);
-      if (layout === moved) assert.equal(link.d === base.links.find((item) => item.key === link.key)!.d, ![from, to].includes("me"));
+  for (const layout of [base, moved]) for (const link of layout.links) {
+    assert.ok(!/[QC]|NaN|Infinity/.test(link.d));
+    assert.ok(link.d.match(/-?\d+(?:\.\d+)?/g)!.map(Number).every(Number.isFinite));
+    if (link.type === "parent") for (const key of link.relationshipKeys!) {
+      const [, id] = JSON.parse(key.slice(key.indexOf(":") + 1));
+      const child = layout.nodes.find(node => node.person.id === id)!;
+      assert.ok(link.d.includes(`${child.x} ${child.y - child.height! / 2}`));
     }
   }
-  const me = base.nodes.find((node) => node.person.id === "me")!;
-  const wife = base.nodes.find((node) => node.person.id === "wife")!;
+  assert.notEqual(moved.links.find(link => link.key === 'parent:["father","me"]')!.d, base.links.find(link => link.key === 'parent:["father","me"]')!.d);
+  const me = base.nodes.find(node => node.person.id === "me")!;
+  const wife = base.nodes.find(node => node.person.id === "wife")!;
   const coincident = repositionFamilyLayout(base, { wife: { x: me.x - wife.x, y: me.y - wife.y } }, family.relationships);
-  assert.ok(coincident.links.every((link) => !/NaN|Infinity/.test(link.d)));
+  assert.ok(coincident.links.every(link => !/NaN|Infinity/.test(link.d)));
 });
 
 test("empty, singleton and wide pyramids stay finite, non-overlapping and do not mutate inputs", () => {

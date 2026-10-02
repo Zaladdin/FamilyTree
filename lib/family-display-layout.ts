@@ -2,8 +2,9 @@ import type { Family } from "@/lib/types";
 import { getFamilyKinship } from "@/lib/family-kinship";
 import { buildFamilyRadialLayout, type FamilyRadialLayout } from "@/lib/family-radial-layout";
 import { buildFamilyPyramidLayout, type FamilyPyramidLayout } from "@/lib/family-pyramid-layout";
+import { buildFamilyGenerationLayout } from "@/lib/family-generation-layout";
 
-export type FamilyDisplayMode = "radial" | "pyramid";
+export type FamilyDisplayMode = "radial" | "pyramid" | "generations" | "horizontal";
 
 /** View policy stays separate from geometry: names never create stored edges. */
 export function buildFamilyDisplayLayout(
@@ -27,6 +28,8 @@ export function buildFamilyDisplayLayout(
   }
   const layout = displayMode === "pyramid"
     ? buildFamilyPyramidLayout(visibleFamily, focus?.id ?? null, !hideOthers)
+    : displayMode === "generations" || displayMode === "horizontal"
+      ? buildFamilyGenerationLayout(visibleFamily, focus?.id ?? null, !hideOthers, displayMode === "horizontal")
     : buildFamilyRadialLayout(visibleFamily, focus?.id ?? null, !hideOthers);
   return {
     ...layout,

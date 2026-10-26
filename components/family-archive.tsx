@@ -3,20 +3,24 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Family } from "@/lib/types";
-import { getPersonFullName } from "@/lib/family-utils";
+import type { Family } from "@/lib/types";
+import type { ArchivePagination, ArchivePerson } from "@/lib/family-archive-reader";
 
 type FamilyArchiveProps = {
-  family: Family;
+  family: Pick<Family, "slug" | "title"> & { archivedPeople: ArchivePerson[] };
   backHref: string;
   canManage: boolean;
+  pagination?: ArchivePagination;
 };
 
-export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProps) {
+export function FamilyArchive({ family, backHref, canManage, pagination }: FamilyArchiveProps) {
   const [errorMessage, setErrorMessage] = useState("");
   const [pendingPersonId, setPendingPersonId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  const archiveHref = `/family/${encodeURIComponent(family.slug)}/archive`;
+  const pageHref = (direction: "after" | "before", cursor: string) =>
+    `${archiveHref}?${new URLSearchParams({ [direction]: cursor }).toString()}`;
 
   async function handleRestorePerson(personId: string) {
     setErrorMessage("");
@@ -72,7 +76,7 @@ export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProp
         </div>
       </div>
 
-      {errorMessage ? <div className="form-message error">{errorMessage}</div> : null}
+      {errorMessage ? <div className="form-message error" role="alert">{errorMessage}</div> : null}
 
       {family.archivedPeople.length ? (
         <div className="archive-grid">
@@ -84,7 +88,7 @@ export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProp
                 <div className="archive-card-header">
                   <div>
                     <div className="status-pill">В архиве</div>
-                    <h2>{getPersonFullName(person)}</h2>
+                    <h2>{[person.firstName, person.middleName, person.lastName].filter(Boolean).join(" ")}</h2>
                   </div>
                   {canManage ? (
                     <button
@@ -124,6 +128,12 @@ export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProp
             );
           })}
         </div>
+      ) : pagination?.isFiltered ? (
+        <section className="archive-empty">
+          <h2>На этой странице больше нет записей</h2>
+          <p>Состав архива мог измениться. Откройте начало архива или соседнюю страницу.</p>
+          <Link className="primary-button" href={archiveHref}>В начало архива</Link>
+        </section>
       ) : (
         <section className="archive-empty">
           <div className="eyebrow">Архив пуст</div>
@@ -137,6 +147,13 @@ export function FamilyArchive({ family, backHref, canManage }: FamilyArchiveProp
           </Link>
         </section>
       )}
+      {pagination && (pagination.previousCursor || pagination.nextCursor) ? (
+        <nav className="archive-actions" aria-label="Страницы архива">
+          {pagination.previousCursor ? <Link className="ghost-button" href={pageHref("before", pagination.previousCursor)}>Предыдущая страница</Link> : null}
+          {pagination.isFiltered ? <Link className="ghost-button" href={archiveHref}>В начало архива</Link> : null}
+          {pagination.nextCursor ? <Link className="ghost-button" href={pageHref("after", pagination.nextCursor)}>Следующая страница</Link> : null}
+        </nav>
+      ) : null}
     </section>
   );
 }

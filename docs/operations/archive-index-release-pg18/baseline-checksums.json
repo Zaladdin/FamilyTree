@@ -1,0 +1,38 @@
+{
+  "source": "Read-only production metadata captured 2026-10-25; no new database connection during release preparation",
+  "capturedAt": "2026-10-25T01:12:42.679Z",
+  "migrations": [
+    {
+      "migration": "20260722115807_init",
+      "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+    },
+    {
+      "migration": "20260802000000_member_audit_actions",
+      "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+    },
+    {
+      "migration": "20260928000000_direct_sibling_relationship",
+      "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+    },
+    {
+      "migration": "20260928010000_person_version",
+      "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+    },
+    {
+      "migration": "20260928020000_automatic_parenthood",
+      "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+    },
+    {
+      "migration": "20260928030000_story_lifecycle",
+      "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+    },
+    {
+      "migration": "20260928040000_account_security",
+      "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+    },
+    {
+      "migration": "20260928050000_media_lifecycle",
+      "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+    }
+  ]
+}

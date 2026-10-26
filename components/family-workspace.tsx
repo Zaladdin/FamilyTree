@@ -32,7 +32,10 @@ import {
   ZoomOutGlyph,
 } from "@/components/workspace-glyphs";
 
+export type FamilyWorkspaceSection = "tree" | "people" | "memories" | "photos";
+
 type FamilyWorkspaceProps = {
+  section?: FamilyWorkspaceSection;
   family: Family;
   focusPersonId: string | null;
   canEdit: boolean;
@@ -85,6 +88,9 @@ type PointerState = {
 };
 
 const DRAG_THRESHOLD = 6;
+const EMPTY_LAYOUT: ReturnType<typeof buildFamilyDisplayLayout> = {
+  nodes: [], links: [], width: 0, height: 0, nodeSize: 188, centerPersonId: null, rings: [],
+};
 
 function getInitials(person: FamilyPerson) {
   return `${person.firstName.charAt(0)}${person.lastName.charAt(0)}`;
@@ -95,7 +101,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function TreeNode({ person, role, isFocus, isContext = false, size, width, height, rectangular = false, relationPath, onSelect, onMove }: TreeNodeProps) {
-  const photo = person.mediaAssets.find((asset) => asset.type === "photo");
+  const avatarUrl = person.avatarUrl ?? person.mediaAssets.find((asset) => asset.type === "photo")?.url;
   return (
     <button
       className={`gene-node ${rectangular ? "gene-node-card" : "gene-node-round"} small interactive${isFocus ? " is-focus" : ""}${isContext ? " is-context" : ""}`}
@@ -124,7 +130,7 @@ function TreeNode({ person, role, isFocus, isContext = false, size, width, heigh
       type="button"
     >
       <div className="gene-node-badge" aria-hidden="true">
-        {photo ? <Image alt="" src={photo.url} width={56} height={56} unoptimized /> : getInitials(person)}
+        {avatarUrl ? <Image alt="" src={avatarUrl} width={56} height={56} unoptimized /> : getInitials(person)}
       </div>
       <div className="gene-node-copy">
         <strong>{person.firstName}</strong>
@@ -137,6 +143,7 @@ function TreeNode({ person, role, isFocus, isContext = false, size, width, heigh
 }
 
 export function FamilyWorkspace({
+  section = "tree",
   family,
   focusPersonId,
   canEdit,
@@ -179,34 +186,39 @@ export function FamilyWorkspace({
   const previousScaleRef = useRef(canvasScale);
   const pendingFitScaleRef = useRef<number | null>(null);
   const focusPerson = family.people.find((person) => person.id === focusPersonId);
+  const sectionTitle = { tree: "Семейное дерево", people: "Люди", memories: "Воспоминания", photos: "Фотоархив" }[section];
+  function sectionHref(target: FamilyWorkspaceSection, personId = focusPerson?.id) {
+    if (demo) return target === "tree" ? "#tree-stage" : `#${{ people: "people", memories: "memory", photos: "photo" }[target]}-panel`;
+    return `/family/${family.slug}${target === "tree" ? "" : `/${target}`}${personId ? `?person=${encodeURIComponent(personId)}` : ""}`;
+  }
   const hasPeople = family.people.length > 0;
   const activeMode = focusPerson && hideOthers ? "close" : "all";
-  const kinship = useMemo(() => getFamilyKinship(family, focusPerson?.id ?? ""), [family, focusPerson?.id]);
-  const peopleById = useMemo(() => new Map(family.people.map((person) => [person.id, person])), [family.people]);
-  const relativeBadges = useMemo(() => family.people.flatMap((person) => {
+  const kinship = useMemo<ReturnType<typeof getFamilyKinship>>(() => section === "tree" ? getFamilyKinship(family, focusPerson?.id ?? "") : new Map(), [section, family, focusPerson?.id]);
+  const peopleById = useMemo(() => new Map(section === "tree" ? family.people.map((person) => [person.id, person] as const) : []), [section, family.people]);
+  const relativeBadges = useMemo(() => section !== "tree" ? [] : family.people.flatMap((person) => {
     const relation = kinship.get(person.id);
     return relation ? [{ role: relation.label, person, distance: relation.distance }] : [];
-  }).sort((a, b) => a.distance - b.distance || getPersonFullName(a.person).localeCompare(getPersonFullName(b.person), "ru")), [family.people, kinship]);
+  }).sort((a, b) => a.distance - b.distance || getPersonFullName(a.person).localeCompare(getPersonFullName(b.person), "ru")), [section, family.people, kinship]);
 
   function relationPath(personId: string) {
     return kinship.get(personId)?.pathIds.map((id) => peopleById.get(id)).filter((person): person is FamilyPerson => Boolean(person)).map(getPersonFullName).join(" → ");
   }
 
   const automaticLayout = useMemo(
-    () => buildFamilyDisplayLayout(family, focusPerson?.id ?? null, activeMode === "close", kinship, displayMode),
-    [family, focusPerson?.id, activeMode, kinship, displayMode],
+    () => section === "tree" ? buildFamilyDisplayLayout(family, focusPerson?.id ?? null, activeMode === "close", kinship, displayMode) : EMPTY_LAYOUT,
+    [section, family, focusPerson?.id, activeMode, kinship, displayMode],
   );
   const branchKey = `${displayMode}:${activeMode}:${focusPerson?.id ?? "overview"}`;
   const positionScope = JSON.stringify([family.id, displayMode, activeMode, displayMode !== "radial" && activeMode === "all" ? null : focusPerson?.id ?? null]);
   const offsets = positionViews[positionScope];
-  const layout = useMemo(() => repositionFamilyLayout(automaticLayout, offsets ?? {}, family.relationships), [automaticLayout, offsets, family.relationships]);
+  const layout = useMemo(() => section === "tree" ? repositionFamilyLayout(automaticLayout, offsets ?? {}, family.relationships) : EMPTY_LAYOUT, [section, automaticLayout, offsets, family.relationships]);
   // Circle export always uses its own remembered positions, even from pyramid view.
   const exportCircleLayout = useMemo(() => {
-    if (!exportOpen || displayMode === "radial") return layout;
+    if (section !== "tree" || !exportOpen || displayMode === "radial") return layout;
     const radial = buildFamilyDisplayLayout(family, focusPerson?.id ?? null, activeMode === "close", kinship);
     const radialScope = JSON.stringify([family.id, "radial", activeMode, focusPerson?.id ?? null]);
     return repositionFamilyLayout(radial, positionViews[radialScope] ?? {}, family.relationships);
-  }, [exportOpen, displayMode, layout, family, focusPerson?.id, activeMode, kinship, positionViews]);
+  }, [section, exportOpen, displayMode, layout, family, focusPerson?.id, activeMode, kinship, positionViews]);
   // Automatic centring tracks the perspective, not manual node movement.
   const focusNode = automaticLayout.nodes.find((node) => node.isFocus);
   const hasManualPositions = Boolean(offsets && Object.values(offsets).some((offset) => offset.x || offset.y));
@@ -253,7 +265,7 @@ export function FamilyWorkspace({
   }
 
   useEffect(() => {
-    if (!surfaceSize.width || !surfaceSize.height) {
+    if (section !== "tree" || !surfaceSize.width || !surfaceSize.height) {
       return;
     }
 
@@ -270,7 +282,7 @@ export function FamilyWorkspace({
     else if (focusPerson) handleFocusView();
     else handleResetView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family.id, branchKey, displayMode, positionReset, surfaceSize.width, surfaceSize.height, layout.width, layout.height, layout.nodes.length, focusNode?.x, focusNode?.y]);
+  }, [section, family.id, branchKey, displayMode, positionReset, surfaceSize.width, surfaceSize.height, layout.width, layout.height, layout.nodes.length, focusNode?.x, focusNode?.y]);
 
   // Keep the centre of the viewport stable when zoom buttons change the scale.
   useEffect(() => {
@@ -288,6 +300,8 @@ export function FamilyWorkspace({
     const element = panSurfaceRef.current;
 
     if (!element) {
+      centeredFocusRef.current = null;
+      setSurfaceSize({ width: 0, height: 0 });
       return undefined;
     }
 
@@ -315,7 +329,7 @@ export function FamilyWorkspace({
     observer.observe(element);
 
     return () => observer.disconnect();
-  }, [hasPeople]);
+  }, [hasPeople, section]);
 
   const minimapWidth = 176;
   const minimapHeight = Math.max(
@@ -494,10 +508,7 @@ export function FamilyWorkspace({
     });
   }
 
-  if (!hasPeople) {
-    return (
-      <section className="workspace-layout tree-mode">
-        <div className="tree-board" style={{ padding: "48px 32px" }}>
+  const emptyFamily = !hasPeople ? (
           <div className="archive-empty">
             <div className="eyebrow">Пустое дерево</div>
             <h2>В этой семье пока нет людей</h2>
@@ -510,11 +521,7 @@ export function FamilyWorkspace({
               <div className="note-box">Режим просмотра. Пока в дереве нет людей.</div>
             )}
           </div>
-          {addPersonSheet}
-        </div>
-      </section>
-    );
-  }
+    ) : null;
 
   return (
     <section className="workspace-layout tree-mode archive-desktop">
@@ -522,19 +529,19 @@ export function FamilyWorkspace({
         <nav className="tree-dock" aria-label="Разделы семейного архива">
           <Link className="workspace-brand" href="/"><TreeGlyph className="workspace-brand-icon" /><span><strong>Rodovo</strong><small>Семейные истории<br />имеют корни</small></span></Link>
           <div className="workspace-family-name"><GroupGlyph className="dock-icon" /><span>{family.title}</span></div>
-          <a className="tree-dock-item active" href="#tree-stage" aria-current="page">
+          <Link className={`tree-dock-item${section === "tree" ? " active" : ""}`} href={sectionHref("tree")} aria-current={section === "tree" ? "page" : undefined}>
             <TreeGlyph className="dock-icon" />
             <span>Дерево</span>
-          </a>
-          <a className="tree-dock-item" href="#people-panel">
+          </Link>
+          <Link className={`tree-dock-item${section === "people" ? " active" : ""}`} href={sectionHref("people")} aria-current={section === "people" ? "page" : undefined}>
             <PersonGlyph className="dock-icon" />
             <span>Люди <small>{family.people.length}</small></span>
-          </a>
-          <a className="tree-dock-item" href="#memory-panel">
+          </Link>
+          <Link className={`tree-dock-item${section === "memories" ? " active" : ""}`} href={sectionHref("memories")} aria-current={section === "memories" ? "page" : undefined}>
             <GroupGlyph className="dock-icon" />
             <span>Воспоминания</span>
-          </a>
-          <a className="tree-dock-item" href="#photo-panel"><svg className="dock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 6-6 4 4 3-3 5 5" /></svg><span>Фотоархив</span></a>
+          </Link>
+          <Link className={`tree-dock-item${section === "photos" ? " active" : ""}`} href={sectionHref("photos")} aria-current={section === "photos" ? "page" : undefined}><svg className="dock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 6-6 4 4 3-3 5 5" /></svg><span>Фотоархив</span></Link>
           {!demo ? <Link className="tree-dock-item" href={`/family/${family.slug}/journal`}>
             <BookGlyph className="dock-icon" />
             <span>Журнал</span>
@@ -553,7 +560,7 @@ export function FamilyWorkspace({
           <div className="tree-sticky-controls" role="region" aria-label="Управление деревом" tabIndex={0}>
           <div className="tree-board-header">
             <div>
-              <h1>Семейное дерево</h1>
+              <h1>{sectionTitle}</h1>
               <span className="workspace-count" role="status">
                 {activeMode === "close" ? `Близкие родственники · ${layout.nodes.length} из ${family.people.length}` : `Вся семья · ${family.people.length} ${countNoun(family.people.length, "человек", "человека", "человек")}`}
               </span>
@@ -569,29 +576,27 @@ export function FamilyWorkspace({
             {canEdit ? <button className="primary-button" onClick={onOpenAddPerson} type="button">+ Добавить человека</button> : null}
           </div>
 
-          <div className="tree-arrangement-bar">
-            <div className="tree-view-switch" role="group" aria-label="Вид дерева">
-              <button type="button" aria-pressed={displayMode === "radial"} onClick={() => setDisplayMode("radial")}>Круг</button>
-              <button type="button" aria-pressed={displayMode === "pyramid"} onClick={() => setDisplayMode("pyramid")}>Пирамида</button>
-              <button type="button" aria-pressed={displayMode === "generations"} onClick={() => setDisplayMode("generations")}>Поколения</button>
-              <button type="button" aria-pressed={displayMode === "horizontal"} onClick={() => setDisplayMode("horizontal")}>Слева направо</button>
-            </div>
+          {section === "tree" && hasPeople ? <div className="tree-arrangement-bar">
+            <label className="tree-view-select" htmlFor="tree-display-mode">Вид дерева
+              <select id="tree-display-mode" value={displayMode} onChange={(event) => setDisplayMode(event.target.value as FamilyDisplayMode)}>
+                <option value="radial">Круг</option><option value="pyramid">Пирамида</option><option value="generations">Поколения</option><option value="horizontal">Слева направо</option>
+              </select>
+            </label>
             <p id="tree-move-help">Двигайте карточки или фон схемы. <span>Shift + стрелки — перемещение карточки.</span></p>
             <div className="tree-arrangement-actions">
               <button className="ghost-button" type="button" disabled={!hasManualPositions} onClick={resetNodePositions}>Сбросить расположение</button>
               <button className="ghost-button tree-export-trigger" type="button" onClick={() => setExportOpen(true)}>Экспорт PNG / PDF</button>
             </div>
             <span className="sr-only" role="status">{moveMessage}</span>
-          </div>
-
-
+          </div> : null}
           </div>
           <TreeExportDialog family={family} layout={exportCircleLayout} open={exportOpen} onClose={() => setExportOpen(false)} />
 
           {feedbackMessage ? <div className="banner-success tree-banner" role="status">{feedbackMessage}</div> : null}
           {addPersonSheet}
+          {emptyFamily}
 
-          <section className={`tree-canvas-shell${!focusPerson ? " is-overview" : ""}`}>
+          {section === "tree" && hasPeople ? <><section className={`tree-canvas-shell${!focusPerson ? " is-overview" : ""}`}>
             <div className="tree-canvas-rings" />
 
             <div
@@ -713,7 +718,11 @@ export function FamilyWorkspace({
               </div>
             </div>
 
-            {focusPerson ? <aside className="tree-inspector" aria-label="Карточка выбранного человека">
+            {focusPerson?.detailsLoaded === false ? <aside className="tree-inspector" aria-label="Карточка выбранного человека">
+              <button className="ghost-button" type="button" aria-label="Закрыть карточку человека" onClick={clearSelection}>Снять выбор</button>
+              <h2>{getPersonFullName(focusPerson)}</h2>
+              <p role="status">Загружаем карточку человека…</p>
+            </aside> : focusPerson ? <aside className="tree-inspector" aria-label="Карточка выбранного человека">
               <div className="tree-inspector-header">
                 <div className="eyebrow">Личная страница</div>
                 <button
@@ -735,7 +744,7 @@ export function FamilyWorkspace({
                 <span>{focusPerson.birthPlace}</span>
               </div>
               {canEdit ? <button className="ghost-button full-width" onClick={onOpenEditPerson} type="button">Редактировать</button> : null}
-              <nav className="inspector-section-nav" aria-label="Материалы выбранного человека"><a href="#person-about">О человеке</a><a href="#memory-panel">Истории</a><a href="#photo-panel">Медиа</a></nav>
+              <nav className="inspector-section-nav" aria-label="Материалы выбранного человека"><a href="#person-about">О человеке</a><Link href={sectionHref("memories", focusPerson.id)}>Истории</Link><Link href={sectionHref("photos", focusPerson.id)}>Медиа</Link></nav>
               <p className="tree-inspector-summary user-text" id="person-about">{focusPerson.biography || "История этого человека ещё не записана."}</p>
               {focusPerson.note ? <p className="note-box user-text">{focusPerson.note}</p> : null}
 
@@ -859,10 +868,11 @@ export function FamilyWorkspace({
               <Link href={`/family/${family.slug}/members`}>Участники семьи</Link>
             </nav> : null}
           </div>
+          </> : null}
         </div>
       </section>
 
-      <div className="workspace-secondary-grid">
+      {hasPeople && (section !== "tree" || demo) ? <div className={`workspace-secondary-grid workspace-section-${section}`}>
         <aside className="workspace-sidebar">
           <div className="sidebar-block" id="people-panel">
             <div className="eyebrow">Люди в дереве</div>
@@ -902,8 +912,22 @@ export function FamilyWorkspace({
           </div> : null}
         </aside>
 
-        {focusPerson ? <section className="detail-grid">
-          <article className="detail-card" id="photo-panel">
+        {focusPerson && focusPerson.detailsLoaded !== false ? <section className="detail-grid">
+          {section !== "tree" ? <article className="detail-card section-person-summary">
+            <h2>{getPersonFullName(focusPerson)}</h2>
+            <p>{focusPerson.birthDate}{focusPerson.birthPlace ? ` · ${focusPerson.birthPlace}` : ""}</p>
+            {section === "people" ? <><p className="user-text">{focusPerson.biography || "История этого человека ещё не записана."}</p>{focusPerson.note ? <p className="note-box user-text">{focusPerson.note}</p> : null}</> : null}
+            <div className="section-person-actions">
+              <Link className="ghost-button" href={sectionHref("tree", focusPerson.id)}>Показать в дереве</Link>
+              {section === "people" ? <><Link className="ghost-button" href={sectionHref("memories", focusPerson.id)}>Воспоминания</Link><Link className="ghost-button" href={sectionHref("photos", focusPerson.id)}>Фотоархив</Link></> : null}
+              {canEdit ? <>
+                {section === "people" ? <><button className="ghost-button" type="button" onClick={onOpenEditPerson}>Редактировать</button>{onOpenAddRelationship ? <button className="ghost-button" type="button" onClick={onOpenAddRelationship}>Связи человека</button> : null}<button className="ghost-button danger-button" type="button" onClick={onArchivePerson}>Архивировать человека</button></> : null}
+                {section === "memories" ? <button className="primary-button" type="button" onClick={onOpenCreateStory}>Добавить историю</button> : null}
+                {section !== "people" ? <button className="ghost-button" type="button" onClick={onOpenUploadMedia}>Добавить фото или голос</button> : null}
+              </> : null}
+            </div>
+          </article> : null}
+          {section === "photos" || demo ? <article className="detail-card" id="photo-panel">
             <div className="eyebrow">Фотоархив</div>
             <h2>Моменты, которые остаются</h2>
             <div className="media-section">
@@ -939,9 +963,9 @@ export function FamilyWorkspace({
                 )}
               </div>
             </div>
-          </article>
+          </article> : null}
 
-          <article className="detail-card" id="memory-panel">
+          {section === "memories" || demo ? <article className="detail-card" id="memory-panel">
             <div className="eyebrow">Лента памяти</div>
             <h2>За именем — целая жизнь</h2>
             <ul className="timeline">
@@ -996,14 +1020,14 @@ export function FamilyWorkspace({
                 )}
               </div>
             </div>
-          </article>
+          </article> : null}
         </section> : <section className="detail-card family-overview-note" id="memory-panel">
           <span id="photo-panel" />
-          <div className="eyebrow">Обзор семьи</div>
-          <h2>У каждого имени — своя история</h2>
-          <p>Сейчас показано всё дерево. Выберите человека на схеме или в списке, чтобы открыть его фотографии, воспоминания и связи с близкими.</p>
+          <div className="eyebrow">{focusPerson ? "Карточка человека" : "Обзор семьи"}</div>
+          <h2>{focusPerson ? getPersonFullName(focusPerson) : "У каждого имени — своя история"}</h2>
+          <p role={focusPerson ? "status" : undefined}>{focusPerson ? "Загружаем карточку человека…" : "Выберите человека в списке, чтобы открыть его фотографии, воспоминания и связи с близкими."}</p>
         </section>}
-      </div>
+      </div> : null}
     </section>
   );
 }

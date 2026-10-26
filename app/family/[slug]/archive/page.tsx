@@ -6,18 +6,21 @@ import {
 } from "@/lib/auth";
 import { FamilyArchive } from "@/components/family-archive";
 import { SiteHeader } from "@/components/site-header";
-import { getFamilyBySlug } from "@/lib/family-repository";
+import { getFamilyArchivePage, normalizeArchiveCursor, type ArchiveCursorQuery } from "@/lib/family-archive-reader";
 
 export const dynamic = "force-dynamic";
 
 type FamilyArchivePageProps = {
   params: Promise<{ slug: string }>;
+  searchParams?: Promise<ArchiveCursorQuery>;
 };
 
-export default async function FamilyArchivePage({ params }: FamilyArchivePageProps) {
+export default async function FamilyArchivePage({ params, searchParams }: FamilyArchivePageProps) {
   const { slug } = await params;
+  const cursor = normalizeArchiveCursor(await searchParams);
+  const query = new URLSearchParams(cursor).toString();
   const currentUser = await getCurrentUser();
-  const redirectPath = normalizeSafeRedirectPath(`/family/${slug}/archive`);
+  const redirectPath = normalizeSafeRedirectPath(`/family/${encodeURIComponent(slug)}/archive${query ? `?${query}` : ""}`);
 
   if (!currentUser) {
     redirect(`/login?redirectTo=${encodeURIComponent(redirectPath)}`);
@@ -29,7 +32,7 @@ export default async function FamilyArchivePage({ params }: FamilyArchivePagePro
     notFound();
   }
 
-  const family = await getFamilyBySlug(slug);
+  const family = await getFamilyArchivePage(slug, cursor);
 
   if (!family) {
     notFound();
@@ -44,7 +47,7 @@ export default async function FamilyArchivePage({ params }: FamilyArchivePagePro
   return (
     <main className="page-shell">
       <SiteHeader compact />
-      <FamilyArchive backHref={backHref} canManage={canManage} family={family} />
+      <FamilyArchive backHref={backHref} canManage={canManage} family={family} pagination={family.pagination} />
     </main>
   );
 }

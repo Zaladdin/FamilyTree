@@ -18,6 +18,7 @@ function person(id: string, firstName: string, gender: FamilyPerson["gender"], b
     status: "living", isArchived: false, biography: "Вымышленный человек для проверки интерфейса.",
     timeline: [], fixtureTimeline: [{ label: "2010 - пользовательское воспоминание", kind: "custom" }],
     media: { photos: 0, audio: 0, documents: 0 }, mediaAssets: [],
+    ...(id === "mother" ? { avatarUrl: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><rect width="56" height="56" fill="#c8dbc9"/><circle cx="28" cy="21" r="10" fill="#527a5a"/><path d="M8 56a20 20 0 0 1 40 0" fill="#527a5a"/></svg>')}` } : {}),
     stories: id === "father" ? [{ id: "first-story", version: 0, title: "Семейная поездка", narrator: "Тестовый рассказчик", body: "Первый день поездки.\n\nВторой абзац воспоминания.", createdAt: "2026-01-01T00:00:00.000Z" }] : [],
   };
 }
@@ -234,7 +235,13 @@ window.fetch = async (input, init) => {
   }
 };
 
+function sectionFromQuery(query: string) {
+  const value = new URLSearchParams(query).get("section");
+  return value === "people" || value === "memories" || value === "photos" ? value : "tree";
+}
+
 function Fixture() {
+  const [section, setSection] = useState<"tree" | "people" | "memories" | "photos">(() => sectionFromQuery(window.location.search));
   const [mode, setMode] = useState<FixtureMode>(initialMode);
   const [query, setQuery] = useState(initialParams.toString());
   const [revision, setRevision] = useState(0);
@@ -242,7 +249,10 @@ function Fixture() {
   const params = new URLSearchParams(query);
   const selectedPerson = fixtureFamily.people.find((item) => item.id === params.get("person"));
   useEffect(() => {
-    const updateQuery = () => setQuery(window.location.search.slice(1));
+    const updateQuery = () => {
+      setQuery(window.location.search.slice(1));
+      setSection(sectionFromQuery(window.location.search));
+    };
     window.addEventListener("popstate", updateQuery);
     return () => window.removeEventListener("popstate", updateQuery);
   }, []);
@@ -257,6 +267,7 @@ function Fixture() {
     saveFixture(prepareFamily(structuredClone(fixtureSources[nextMode])));
     const nextParams = new URLSearchParams({ fixture: nextMode, person: defaultPersonId(nextMode) });
     setMode(nextMode);
+    setSection("tree");
     changeQuery(nextParams.toString());
     setRevision(0);
     setResetVersion((value) => value + 1);
@@ -280,6 +291,19 @@ function Fixture() {
 
   return <FixtureNavigationProvider value={{
     query,
+    navigate: (href) => {
+      const destination = new URL(href, window.location.origin);
+      const match = destination.pathname.match(/^\/family\/relationship-ui-fixture(?:\/(people|memories|photos))?$/);
+      if (destination.origin !== window.location.origin || !match) return false;
+      const nextSection = (match[1] ?? "tree") as typeof section;
+      setSection(nextSection);
+      const nextParams = new URLSearchParams(query);
+      nextParams.set("section", nextSection);
+      const personId = destination.searchParams.get("person");
+      if (personId) nextParams.set("person", personId); else nextParams.delete("person");
+      changeQuery(nextParams.toString(), true);
+      return true;
+    },
     router: {
       replace: (href) => changeQuery(new URL(href, window.location.origin).search.slice(1)),
       refresh: () => setRevision((value) => value + 1),
@@ -288,6 +312,21 @@ function Fixture() {
     <aside className="note-box" style={{ margin: 20 }}>
       Только вымышленные данные в памяти и хранилище этой вкладки. База данных и настоящие аккаунты не используются. Перезагрузка сохраняет тестовые связи; сброс начинает сценарий заново.
       <div className="form-grid" style={{ marginTop: 12, maxWidth: 760 }}>
+        <label className="form-field">
+          <span>Раздел проверки</span>
+          <select value={section} onChange={(event) => {
+            const nextSection = event.target.value as typeof section;
+            setSection(nextSection);
+            const nextParams = new URLSearchParams(query);
+            nextParams.set("section", nextSection);
+            changeQuery(nextParams.toString(), true);
+          }}>
+            <option value="tree">Дерево</option>
+            <option value="people">Люди</option>
+            <option value="memories">Воспоминания</option>
+            <option value="photos">Фотоархив</option>
+          </select>
+        </label>
         <label className="form-field">
           <span>Сценарий проверки</span>
           <select value={mode} onChange={(event) => resetFixture(event.target.value as FixtureMode)}>
@@ -320,7 +359,7 @@ function Fixture() {
       {selectedPerson ? <p>Сохранённая версия карточки: {selectedPerson.version}; биография: {selectedPerson.biography}</p> : null}
       {mode === "marriage" ? <p>Антон и Вера — супруги. Лесные — родители Веры и Кирилла; Речные — родители Антона и Ольги. Исходный порядок карточек специально перемешан для проверки линий.</p> : null}
     </aside>
-    <FamilyApp key={`${mode}-${resetVersion}`} canEdit initialFamily={fixtureFamily} initialFocusPersonId={params.get("person")} />
+    <FamilyApp key={`${mode}-${resetVersion}-${section}`} section={section} canEdit initialFamily={fixtureFamily} initialFocusPersonId={params.get("person")} />
     <details style={{ margin: 20 }}>
       <summary>Проверочные связи в памяти</summary>
       <pre>{JSON.stringify(fixtureFamily.relationships, null, 2)}</pre>

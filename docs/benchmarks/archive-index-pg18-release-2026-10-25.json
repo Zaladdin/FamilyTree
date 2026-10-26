@@ -1,0 +1,322 @@
+{
+  "date": "2026-10-25T09:31:13.559Z",
+  "profile": "pg18-release",
+  "server": [
+    {
+      "version": "PostgreSQL 18.6 on x86_64-windows, compiled by msvc-19.44.35229, 64-bit",
+      "version_number": "180006"
+    }
+  ],
+  "prisma": "6.8.2",
+  "syntheticPeople": 421000,
+  "baselineChecksums": [
+    {
+      "migration": "20260722115807_init",
+      "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+    },
+    {
+      "migration": "20260802000000_member_audit_actions",
+      "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+    },
+    {
+      "migration": "20260928000000_direct_sibling_relationship",
+      "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+    },
+    {
+      "migration": "20260928010000_person_version",
+      "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+    },
+    {
+      "migration": "20260928020000_automatic_parenthood",
+      "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+    },
+    {
+      "migration": "20260928030000_story_lifecycle",
+      "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+    },
+    {
+      "migration": "20260928040000_account_security",
+      "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+    },
+    {
+      "migration": "20260928050000_media_lifecycle",
+      "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+    }
+  ],
+  "artifactChecksums": {
+    "baseline": {
+      "schema": "a454971d3d19c594f05ca28e6a65a9fbc0d6c9f6d8e35dd8ead98a58d26af37f",
+      "migrations": [
+        {
+          "migration": "20260722115807_init",
+          "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+        },
+        {
+          "migration": "20260802000000_member_audit_actions",
+          "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+        },
+        {
+          "migration": "20260928000000_direct_sibling_relationship",
+          "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+        },
+        {
+          "migration": "20260928010000_person_version",
+          "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+        },
+        {
+          "migration": "20260928020000_automatic_parenthood",
+          "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+        },
+        {
+          "migration": "20260928030000_story_lifecycle",
+          "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+        },
+        {
+          "migration": "20260928040000_account_security",
+          "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+        },
+        {
+          "migration": "20260928050000_media_lifecycle",
+          "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+        }
+      ]
+    },
+    "create": {
+      "schema": "6e02d265a8eb607faf280b4eba20c5c4e4c6540a7b7d6273540d7cc8794ee444",
+      "migrations": [
+        {
+          "migration": "20260722115807_init",
+          "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+        },
+        {
+          "migration": "20260802000000_member_audit_actions",
+          "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+        },
+        {
+          "migration": "20260928000000_direct_sibling_relationship",
+          "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+        },
+        {
+          "migration": "20260928010000_person_version",
+          "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+        },
+        {
+          "migration": "20260928020000_automatic_parenthood",
+          "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+        },
+        {
+          "migration": "20260928030000_story_lifecycle",
+          "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+        },
+        {
+          "migration": "20260928040000_account_security",
+          "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+        },
+        {
+          "migration": "20260928050000_media_lifecycle",
+          "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+        },
+        {
+          "migration": "20261025000000_archive_pagination_index",
+          "checksum": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d"
+        }
+      ]
+    },
+    "rollback": {
+      "schema": "a454971d3d19c594f05ca28e6a65a9fbc0d6c9f6d8e35dd8ead98a58d26af37f",
+      "migrations": [
+        {
+          "migration": "20260722115807_init",
+          "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+        },
+        {
+          "migration": "20260802000000_member_audit_actions",
+          "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+        },
+        {
+          "migration": "20260928000000_direct_sibling_relationship",
+          "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+        },
+        {
+          "migration": "20260928010000_person_version",
+          "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+        },
+        {
+          "migration": "20260928020000_automatic_parenthood",
+          "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+        },
+        {
+          "migration": "20260928030000_story_lifecycle",
+          "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+        },
+        {
+          "migration": "20260928040000_account_security",
+          "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+        },
+        {
+          "migration": "20260928050000_media_lifecycle",
+          "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+        },
+        {
+          "migration": "20261025000000_archive_pagination_index",
+          "checksum": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d"
+        },
+        {
+          "migration": "20261025010000_rollback_archive_pagination_index",
+          "checksum": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502"
+        }
+      ]
+    }
+  },
+  "createSha256": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d",
+  "rollbackSha256": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502",
+  "events": [
+    {
+      "scenario": "create_lock_timeout",
+      "sqlstate": "55P03",
+      "elapsedMs": 4548.194499999998,
+      "indexPresent": false
+    },
+    {
+      "scenario": "create_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 2445.8536999999997,
+      "indexPresent": false
+    },
+    {
+      "scenario": "create_success",
+      "elapsedMs": 3933.8367,
+      "index": {
+        "valid": true,
+        "ready": true,
+        "definition": "CREATE INDEX \"Person_familyId_isArchived_id_idx\" ON public.\"Person\" USING btree (\"familyId\", \"isArchived\", id)"
+      }
+    },
+    {
+      "scenario": "create_status_diff_noop",
+      "passed": true
+    },
+    {
+      "scenario": "drop_lock_timeout",
+      "sqlstate": "55P03",
+      "elapsedMs": 4535.093700000012,
+      "indexPresent": true
+    },
+    {
+      "scenario": "drop_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 2297.047999999995,
+      "indexPresent": true
+    },
+    {
+      "scenario": "rollback_success",
+      "elapsedMs": 2578.8759999999893,
+      "fingerprint": [
+        {
+          "count": "421000",
+          "checksum": "-2508724733720235504871"
+        }
+      ]
+    },
+    {
+      "scenario": "migration_session_settings",
+      "lockTimeout": "3s",
+      "statementTimeout": "60s",
+      "verifiedInsideMigration": true
+    },
+    {
+      "scenario": "execution_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 2529.109899999996
+    }
+  ],
+  "finalHistory": [
+    {
+      "migration_name": "20260722115807_init",
+      "checksum": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260802000000_member_audit_actions",
+      "checksum": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928000000_direct_sibling_relationship",
+      "checksum": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928010000_person_version",
+      "checksum": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928020000_automatic_parenthood",
+      "checksum": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928030000_story_lifecycle",
+      "checksum": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928040000_account_security",
+      "checksum": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928050000_media_lifecycle",
+      "checksum": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "checksum": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "checksum": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "checksum": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "checksum": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "checksum": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "checksum": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502",
+      "finished": true,
+      "rolled": false
+    }
+  ],
+  "finalIndexAbsent": true,
+  "personFingerprintUnchanged": true,
+  "note": "Probe migrations exist only in disposable lab; finalHistory captured before probes. No production connection."
+}

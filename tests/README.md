@@ -97,3 +97,34 @@ column across 11 tables. It checks legacy sessions, defaults, migration history,
 schema drift and repeat deployment. It refuses a populated public schema and
 leaves synthetic rows for diagnosis; use a dedicated disposable container.
 See [`docs/legacy-upgrade-acceptance.ru.md`](../docs/legacy-upgrade-acceptance.ru.md).
+
+## Loading states and large archives
+
+`family-workspace-read.test.ts` verifies compact page projections, family-scoped
+selected detail, archived relationship endpoints, concurrent disappearance and a
+synthetic 1000-person payload. Write-side graph queries remain separate.
+`family-section-performance.test.ts` verifies that non-tree sections skip geometry
+and kinship computation. `family-archive-reader.test.ts`, `family-archive-page.test.ts`
+and `family-archive-pagination.test.ts` cover 24-item cursor pages, removed anchors,
+authorization-before-read and empty cursor pages. These use mocks, not PostgreSQL.
+`route-states.test.ts` covers generic Russian error/loading markup without private
+error messages.
+
+Run `npx tsx scripts/relationship-ui-preview.ts` and open loopback
+`http://127.0.0.1:3001/archive-ui` for error, loading, delayed detail and archive
+pagination scenarios. The existing `/relationship-ui` fixture remains available.
+Both use real UI components with synthetic data and no external fetch fallback.
+The archive fixture checks retry callbacks; it does not establish recovery of an
+actual Next.js Server Component error boundary. Close temporary tabs and stop the
+verified preview process afterwards.
+
+The prepared `20261025000000_archive_pagination_index` migration supports
+`familyId/isArchived/id` ranges. Unit tests and `prisma validate` do not apply it
+or establish its SQL performance; deployment to a real database is separate work.
+
+The index has since been measured on a separately owned disposable PostgreSQL16
+cluster: see `docs/archive-index-benchmark-2026-10-25.ru.md` and raw JSON under
+`docs/benchmarks/`. `scripts/archive-index-benchmark.ts` refuses implicit/remote
+datasources and requires an exact runtime database ownership marker in addition
+to the CI/test URL guards. It creates 421000 synthetic people, runs A/B/A/B,
+uses normal login against an isolated compiled server, and never loads `.env`.

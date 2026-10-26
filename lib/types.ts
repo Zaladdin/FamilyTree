@@ -76,6 +76,8 @@ export type AuditEntry = {
 
 export type FamilyPerson = {
   id: string;
+  /** False for lightweight page summaries; mutations require the full selected card. */
+  detailsLoaded?: boolean;
   // Persisted cards include a version; read-only synthetic data may omit it.
   version?: number;
   firstName: string;
@@ -91,6 +93,8 @@ export type FamilyPerson = {
   note?: string;
   timeline: string[];
   media: PersonMedia;
+  /** Protected photo URL available even when this person's attachments are not loaded. */
+  avatarUrl?: string;
   mediaAssets: MediaAsset[];
   stories: Story[];
   deletedStories?: Story[];

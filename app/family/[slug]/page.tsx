@@ -5,7 +5,7 @@ import {
   getFamilyRoleForUserId,
   normalizeSafeRedirectPath,
 } from "@/lib/auth";
-import { getFamilyBySlug } from "@/lib/family-repository";
+import { getFamilyWorkspaceBySlug } from "@/lib/family-workspace-reader";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export default async function FamilyPage({
   }
 
   const canEdit = viewerRole === "owner" || viewerRole === "admin" || viewerRole === "editor";
-  const family = await getFamilyBySlug(slug, person, { includeDeletedStories: canEdit });
+  const family = await getFamilyWorkspaceBySlug(slug, person, { canEdit });
 
   if (!family) {
     notFound();

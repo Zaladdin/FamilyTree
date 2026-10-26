@@ -1,0 +1,2 @@
+# Release payloads contain reviewed mixed LF/CRLF checksums; preserve exact bytes.
+docs/operations/** -text whitespace=cr-at-eol

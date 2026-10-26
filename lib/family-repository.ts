@@ -22,6 +22,14 @@ const familyOverviewInclude = {
   digitizationTasks: true,
   people: {
     orderBy: [{ birthDate: "asc" }, { firstName: "asc" }],
+    include: {
+      mediaAssets: {
+        where: { state: "ready", type: "photo" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        select: { id: true },
+      },
+    },
   },
   relationships: true,
   parentSuppressions: true,
@@ -51,9 +59,7 @@ const personDetailInclude = {
   },
   mediaAssets: {
     where: { state: "ready" },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   },
   stories: {
     orderBy: {
@@ -75,7 +81,12 @@ type PersonDetailRecord = Prisma.PersonGetPayload<{
   include: typeof personDetailInclude;
 }>;
 
-function mapPersonSummary(person: FamilyOverviewRecord["people"][number]): FamilyPerson {
+type PersonSummaryRecord = Omit<FamilyOverviewRecord["people"][number], "mediaAssets"> & {
+  mediaAssets?: { id: string }[];
+};
+
+function mapPersonSummary(person: PersonSummaryRecord, familySlug?: string): FamilyPerson {
+  const avatarId = person.mediaAssets?.[0]?.id;
   return {
     id: person.id,
     version: person.version,
@@ -96,6 +107,7 @@ function mapPersonSummary(person: FamilyOverviewRecord["people"][number]): Famil
       audio: person.audioCount,
       documents: person.documentsCount,
     },
+    ...(avatarId && familySlug ? { avatarUrl: buildPrivateMediaUrl(familySlug, person.id, avatarId) } : {}),
     mediaAssets: [],
     stories: [],
     memory: person.memoryTitle
@@ -118,8 +130,10 @@ function mapStory(story: PersonDetailRecord["stories"][number]) {
 }
 
 function mapPersonDetail(person: PersonDetailRecord, includeDeletedStories = false): FamilyPerson {
+  const avatar = person.mediaAssets.find((asset) => asset.state === "ready" && asset.type === "photo");
   return {
     id: person.id,
+    detailsLoaded: true,
     version: person.version,
     firstName: person.firstName,
     lastName: person.lastName,
@@ -138,6 +152,7 @@ function mapPersonDetail(person: PersonDetailRecord, includeDeletedStories = fal
       audio: person.audioCount,
       documents: person.documentsCount,
     },
+    ...(avatar ? { avatarUrl: buildPrivateMediaUrl(person.family.slug, person.id, avatar.id) } : {}),
     mediaAssets: person.mediaAssets.filter((asset) => asset.state === "ready").map((asset) => ({
       id: asset.id,
       type: asset.type,
@@ -200,8 +215,8 @@ function mapFamily(record: FamilyOverviewRecord): Family {
       owner: task.owner,
       status: task.status,
     })),
-    people: activePeople.map(mapPersonSummary),
-    archivedPeople: archivedPeople.map(mapPersonSummary),
+    people: activePeople.map((person) => mapPersonSummary(person, record.slug)),
+    archivedPeople: archivedPeople.map((person) => mapPersonSummary(person, record.slug)),
     relationships: record.relationships
       .filter(
         (relationship) =>
@@ -311,13 +326,19 @@ async function loadFamilyJournalRecordBySlug(slug: string) {
   });
 }
 
-async function loadPersonDetailById(personId: string, includeDeletedStories = false) {
+async function loadPersonDetailById(personId: string, includeDeletedStories = false, familyId?: string) {
   return prisma.person.findUnique({
-    where: { id: personId },
+    where: { id: personId, ...(familyId ? { familyId, isArchived: false } : {}) },
     include: { ...personDetailInclude, stories: { ...personDetailInclude.stories,
       ...(!includeDeletedStories ? { where: { deletedAt: null } } : {}),
     } },
   });
+}
+
+/** Read a selected active card without loading the family's mutation graph. */
+export async function getFamilyPersonDetail(familyId: string, personId: string, includeDeletedStories = false) {
+  const person = await loadPersonDetailById(personId, includeDeletedStories, familyId);
+  return person ? mapPersonDetail(person, includeDeletedStories) : null;
 }
 
 function getNewRelationships(
@@ -598,7 +619,7 @@ export async function updatePersonInFamily(
         personName: formatPersonName(currentPerson),
         message: `${actorName} обновил(а) карточку человека "${formatPersonName(currentPerson)}".`,
       });
-      return mapPersonSummary(updated);
+      return { ...mapPersonSummary(updated), ...(currentPerson.avatarUrl ? { avatarUrl: currentPerson.avatarUrl } : {}) };
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

@@ -6,7 +6,7 @@ import {
   getFamilyRoleForUserId,
   normalizeSafeRedirectPath,
 } from "@/lib/auth";
-import { getFamilyJournalBySlug } from "@/lib/family-repository";
+import { getFamilyJournalPage } from "@/lib/family-archive-reader";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +29,7 @@ export default async function FamilyJournalPage({ params }: FamilyJournalPagePro
     notFound();
   }
 
-  const family = await getFamilyJournalBySlug(slug);
+  const family = await getFamilyJournalPage(slug);
 
   if (!family) {
     notFound();

@@ -1,0 +1,7 @@
+# ECC-adapted project settings. Keep the user's model, notifications, permissions,
+# existing MCPs and plugins inherited; never copy ECC's macOS/legacy config.
+[features]
+multi_agent = true
+
+[agents]
+max_concurrent_threads_per_session = 4

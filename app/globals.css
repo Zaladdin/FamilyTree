@@ -652,3 +652,28 @@ h1, h2, h3 { text-wrap: pretty; }
   .archive-desktop .workspace-search-results { position: static; width: 100%; max-height: 120px; }
   .archive-desktop .tree-bottom-controls { position: static; }
 }
+
+/* Family sections share a top navigation; the canvas uses the full page width. */
+.archive-desktop .tree-stage { display: block; }
+.archive-desktop .tree-dock { position: static; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; height: auto; padding: 14px 24px; gap: 8px; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+.archive-desktop .workspace-brand { align-items: center; padding: 0 16px 0 0; }
+.archive-desktop .workspace-brand strong { font-size: 27px; }
+.archive-desktop .workspace-brand small { display: none; }
+.archive-desktop .workspace-brand-icon { width: 28px; height: 34px; }
+.archive-desktop .workspace-family-name { margin: 0 12px 0 0; padding: 9px 12px; max-width: 240px; }
+.archive-desktop .tree-dock-item { white-space: nowrap; padding: 10px; }
+.archive-desktop .workspace-account { display: flex; flex-wrap: wrap; align-items: center; margin: 0 0 0 auto; padding: 0; gap: 4px; }
+.archive-desktop .workspace-secondary-grid { margin: 24px; }
+.tree-view-select { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+.tree-view-select select { min-height: 42px; min-width: 180px; padding: 9px 32px 9px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.tree-view-select select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.section-person-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.section-person-summary h2 { margin-bottom: 8px; }
+@media (max-width: 600px) {
+  .archive-desktop .tree-dock { padding: 12px; gap: 4px; }
+  .archive-desktop .workspace-family-name { max-width: 200px; margin-right: 0; }
+  .archive-desktop .workspace-account { width: 100%; margin-left: 0; }
+  .archive-desktop .workspace-secondary-grid { margin: 16px 12px; }
+  .tree-view-select { width: 100%; }
+  .tree-view-select select { flex: 1; min-width: 0; }
+}

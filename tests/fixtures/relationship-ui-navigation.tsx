@@ -1,7 +1,8 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, type AnchorHTMLAttributes, type ReactNode } from "react";
 
 type FixtureNavigation = {
   query: string;
+  navigate?: (href: string) => boolean;
   router: { replace: (href: string) => void; refresh: () => void };
 };
 const NavigationContext = createContext<FixtureNavigation | null>(null);
@@ -19,3 +20,13 @@ function useFixtureNavigation() {
 export function usePathname() { return "/relationship-ui"; }
 export function useSearchParams() { return new URLSearchParams(useFixtureNavigation().query); }
 export function useRouter() { return useFixtureNavigation().router; }
+
+export function FixtureLink({ href, children, onClick, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const navigation = useFixtureNavigation();
+  return <a {...props} href={href} onClick={(event) => {
+    onClick?.(event);
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey
+      || event.shiftKey || event.altKey || props.target || props.download || !href) return;
+    if (navigation.navigate?.(href)) event.preventDefault();
+  }}>{children}</a>;
+}

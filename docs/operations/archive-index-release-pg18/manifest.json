@@ -1,0 +1,152 @@
+{
+  "formatVersion": 1,
+  "release": "archive-index-release-pg18-2026-10-25",
+  "preparedAt": "2026-10-25",
+  "targetPostgreSQL": "18.6",
+  "toolVersions": {
+    "node": "v22.19.0",
+    "prisma": "6.8.2",
+    "typescript": "5.8.3"
+  },
+  "provenance": {
+    "baseline": "baseline-checksums.json from prior read-only metadata; no new connection",
+    "applySchema": "prisma/schema.prisma byte snapshot",
+    "rollbackSchema": "docs/operations/archive-index-rollback/schema.prisma byte snapshot",
+    "historicalMigrations": "prisma/migrations (copies only)",
+    "soleNormalization": "20260928000000_direct_sibling_relationship copies: CRLF to LF; exact production checksum",
+    "createUnchanged": true,
+    "dropSource": "docs/operations/archive-index-rollback/migrations/20261025010000_rollback_archive_pagination_index/migration.sql"
+  },
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    },
+    {
+      "path": "apply/migrations/20260722115807_init/migration.sql",
+      "bytes": 9074,
+      "sha256": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+    },
+    {
+      "path": "apply/migrations/20260802000000_member_audit_actions/migration.sql",
+      "bytes": 175,
+      "sha256": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+    },
+    {
+      "path": "apply/migrations/20260928000000_direct_sibling_relationship/migration.sql",
+      "bytes": 227,
+      "sha256": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+    },
+    {
+      "path": "apply/migrations/20260928010000_person_version/migration.sql",
+      "bytes": 156,
+      "sha256": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+    },
+    {
+      "path": "apply/migrations/20260928020000_automatic_parenthood/migration.sql",
+      "bytes": 1480,
+      "sha256": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+    },
+    {
+      "path": "apply/migrations/20260928030000_story_lifecycle/migration.sql",
+      "bytes": 1389,
+      "sha256": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+    },
+    {
+      "path": "apply/migrations/20260928040000_account_security/migration.sql",
+      "bytes": 3212,
+      "sha256": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+    },
+    {
+      "path": "apply/migrations/20260928050000_media_lifecycle/migration.sql",
+      "bytes": 759,
+      "sha256": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+    },
+    {
+      "path": "apply/migrations/20261025000000_archive_pagination_index/migration.sql",
+      "bytes": 171,
+      "sha256": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d"
+    },
+    {
+      "path": "apply/migrations/migration_lock.toml",
+      "bytes": 128,
+      "sha256": "99836963713b4f5b269ad49af0ed3d7b0b2e336115c2f92dc9ac683d139d0900"
+    },
+    {
+      "path": "apply/schema.prisma",
+      "bytes": 9981,
+      "sha256": "6e02d265a8eb607faf280b4eba20c5c4e4c6540a7b7d6273540d7cc8794ee444"
+    },
+    {
+      "path": "baseline-checksums.json",
+      "bytes": 1408,
+      "sha256": "e00a5243b12d22ffea04b70e1ad9230e8c9adbe2aff29eb88fca4b16f19af451"
+    },
+    {
+      "path": "README.ru.md",
+      "bytes": 8069,
+      "sha256": "7ef940206525e4f215d27e54cc3d8d75571c0d781df44c7cfc99261463ec857b"
+    },
+    {
+      "path": "rollback/migrations/20260722115807_init/migration.sql",
+      "bytes": 9074,
+      "sha256": "3c189e3a3847fb41fba54803a0c55d24e46b60800bfc16798dc61814428de494"
+    },
+    {
+      "path": "rollback/migrations/20260802000000_member_audit_actions/migration.sql",
+      "bytes": 175,
+      "sha256": "78ea0f58f5efb98fe0e359fdfc6d0f179fdf4082461f6f7dc46c50c46c516259"
+    },
+    {
+      "path": "rollback/migrations/20260928000000_direct_sibling_relationship/migration.sql",
+      "bytes": 227,
+      "sha256": "efdb04e0d3fab50f81d3370c45a841be3a7a29a1c1ba1ea746680e6bdb3c4bfe"
+    },
+    {
+      "path": "rollback/migrations/20260928010000_person_version/migration.sql",
+      "bytes": 156,
+      "sha256": "fdc5a4f7fb59b18b98f2a76505674a5e161e53a6f77dbc33b34060dd33c63ddc"
+    },
+    {
+      "path": "rollback/migrations/20260928020000_automatic_parenthood/migration.sql",
+      "bytes": 1480,
+      "sha256": "6d88a8bdd4802ba1c8047894e479110161d6977c1475cea9de59d508ce3b5bb6"
+    },
+    {
+      "path": "rollback/migrations/20260928030000_story_lifecycle/migration.sql",
+      "bytes": 1389,
+      "sha256": "e09c25dc74a4fe246da56510b36b650dc0ac04f566150cc2c35dfea96fc8d128"
+    },
+    {
+      "path": "rollback/migrations/20260928040000_account_security/migration.sql",
+      "bytes": 3212,
+      "sha256": "db8da1883038083edfc3868301ef67470a376ffee8954248b700e0dd3ff2098b"
+    },
+    {
+      "path": "rollback/migrations/20260928050000_media_lifecycle/migration.sql",
+      "bytes": 759,
+      "sha256": "d79db8cc9c99652b8dae868ae099c054b1df3557db98d7c4f1e0d025170539b5"
+    },
+    {
+      "path": "rollback/migrations/20261025000000_archive_pagination_index/migration.sql",
+      "bytes": 171,
+      "sha256": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d"
+    },
+    {
+      "path": "rollback/migrations/20261025010000_rollback_archive_pagination_index/migration.sql",
+      "bytes": 151,
+      "sha256": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502"
+    },
+    {
+      "path": "rollback/migrations/migration_lock.toml",
+      "bytes": 128,
+      "sha256": "99836963713b4f5b269ad49af0ed3d7b0b2e336115c2f92dc9ac683d139d0900"
+    },
+    {
+      "path": "rollback/schema.prisma",
+      "bytes": 9942,
+      "sha256": "a454971d3d19c594f05ca28e6a65a9fbc0d6c9f6d8e35dd8ead98a58d26af37f"
+    }
+  ]
+}

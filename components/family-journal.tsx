@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { Family } from "@/lib/types";
+import type { FamilyJournalPageData } from "@/lib/family-archive-reader";
 
 type FamilyJournalProps = {
-  family: Family;
+  family: Pick<FamilyJournalPageData, "title" | "auditLog">;
   backHref: string;
 };
 

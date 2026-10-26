@@ -27,7 +27,7 @@ test("story controls follow editing rights, deleted stories stay outside the act
   Object.assign(person, { deletedStories: [{ id: "deleted-story", title: "Удалённое воспоминание", body: "Сохранённый текст", createdAt: "2026-01-01T00:00:00.000Z", version: 1, deletedAt: "2026-02-01T00:00:00.000Z" }] });
   for (const canEdit of [false, true]) {
     const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
-      family, focusPersonId: "timur", canEdit, canvasScale: 1,
+      family, focusPersonId: "timur", canEdit, canvasScale: 1, section: "memories",
       onEditStory: () => {}, onDeleteStory: () => {}, onRestoreStory: () => {},
     }));
     assert.match(markup, /class="[^"]*user-text[^"]*"/);
@@ -64,7 +64,7 @@ test("archive desk retains working navigation and account actions without exposi
       family: fixtureFamily(), focusPersonId: "timur", canEdit: false, canvasScale: 1, demo,
     }));
     const hrefs = tags(markup, "a").map((tag) => attr(tag, "href"));
-    assert.ok(hrefs.includes("#photo-panel") && hrefs.includes("#people-panel"));
+    assert.ok(hrefs.includes(demo ? "#photo-panel" : `/family/akhmedov/photos?person=timur`) && hrefs.includes(demo ? "#people-panel" : `/family/akhmedov/people?person=timur`));
     assert.equal(hrefs.includes("/account"), !demo);
     assert.equal(hrefs.includes("/families"), !demo);
     assert.equal(hrefs.includes("/register"), demo);
@@ -72,6 +72,89 @@ test("archive desk retains working navigation and account actions without exposi
     assert.equal(Boolean(logout), !demo);
     if (logout) assert.equal(attr(logout, "method"), "post");
     assert.ok(markup.includes('class="tree-bottom-controls"'));
+  }
+});
+
+test("separate archive pages select people and preserve their scoped content and editing rights without the tree canvas", () => {
+  for (const section of ["people", "memories", "photos"] as const) {
+    for (const canEdit of [false, true]) {
+      const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
+        family: fixtureFamily(), focusPersonId: "timur", canEdit, canvasScale: 1, section,
+        onOpenAddRelationship: () => {},
+      }));
+      assert.equal(renderedPeople(markup).length, 0);
+      assert.ok(!markup.includes('class="tree-bottom-controls"'));
+      assert.ok(markup.includes('id="people-panel"'));
+      assert.equal(markup.includes('id="photo-panel"'), section === "photos");
+      assert.equal(markup.includes('id="memory-panel"'), section === "memories");
+      assert.equal(markup.includes("Личный текст воспоминания"), section === "memories");
+      assert.equal(markup.includes("Личная биография для проверки выбранной карточки"), section === "people");
+      assert.equal(markup.includes("Архивировать человека"), section === "people" && canEdit);
+      assert.equal(markup.includes("Связи человека"), section === "people" && canEdit);
+      assert.equal(markup.includes("Добавить историю"), section === "memories" && canEdit);
+      assert.equal(markup.includes("Добавить фото или голос"), section !== "people" && canEdit);
+      const links = tags(markup, "a");
+      assert.ok(links.some((tag) => attr(tag, "href") === `/family/akhmedov/${section}?person=timur` && attr(tag, "aria-current") === "page"));
+      assert.ok(links.some((tag) => attr(tag, "href") === "/family/akhmedov?person=timur"));
+    }
+  }
+});
+
+test("archive sections with no selected person display a selection prompt without stale personal material", () => {
+  for (const section of ["people", "memories", "photos"] as const) {
+    const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
+      family: fixtureFamily(), focusPersonId: null, canEdit: true, canvasScale: 1, section,
+    }));
+    assert.match(markup, /Выберите человека в списке/);
+    assert.ok(!markup.includes("Личный текст воспоминания"));
+    assert.ok(!markup.includes("Личная биография для проверки выбранной карточки"));
+    assert.equal(renderedPeople(markup).length, 0);
+  }
+});
+
+test("section navigation preserves valid selection and omits missing or cleared people", () => {
+  for (const focusPersonId of ["timur", null, "missing"]) {
+    for (const section of ["tree", "people", "memories", "photos"] as const) {
+      const html = renderToStaticMarkup(createElement(FamilyWorkspace, {
+        family: fixtureFamily(), focusPersonId, canEdit: false, canvasScale: 1, section,
+      }));
+      const dock = html.match(/<nav\b[^>]*aria-label="Разделы семейного архива"[\s\S]*?<\/nav>/)?.[0];
+      assert.ok(dock);
+      const hrefs = tags(dock, "a").map((tag) => attr(tag, "href"));
+      for (const suffix of ["", "/people", "/memories", "/photos"]) {
+        assert.ok(hrefs.includes(`/family/akhmedov${suffix}${focusPersonId === "timur" ? "?person=timur" : ""}`));
+      }
+    }
+  }
+});
+
+test("tree renders summary avatars for unselected relatives without loading their attachments", () => {
+  const family = fixtureFamily();
+  const relative = family.people.find((person) => person.id !== "timur")!;
+  Object.assign(relative, { avatarUrl: "/api/test-fixtures/relative-avatar" });
+  relative.mediaAssets = [];
+  const html = renderToStaticMarkup(createElement(FamilyWorkspace, {
+    family, focusPersonId: "timur", canEdit: false, canvasScale: 1,
+  }));
+  const button = html.match(new RegExp(`<button\\b[^>]*data-person-id="${relative.id}"[^>]*>[\\s\\S]*?<\\/button>`))?.[0];
+  assert.ok(button);
+  assert.ok(tags(button, "img").some((tag) => attr(tag, "src") === "/api/test-fixtures/relative-avatar"));
+  assert.deepEqual(relative.mediaAssets, []);
+});
+
+test("selected summaries announce loading and never expose mutation actions or empty personal material", () => {
+  const family = fixtureFamily();
+  const person = family.people.find((item) => item.id === "timur")!;
+  person.detailsLoaded = false;
+  for (const section of ["tree", "people", "memories", "photos"] as const) {
+    const html = renderToStaticMarkup(createElement(FamilyWorkspace, {
+      family, focusPersonId: "timur", canEdit: true, canvasScale: 1, section,
+      onOpenEditPerson: () => {}, onOpenCreateStory: () => {}, onArchivePerson: () => {},
+    }));
+    assert.match(html, /role="status"[^>]*>Загружаем карточку человека/);
+    assert.doesNotMatch(html, /Личный текст воспоминания|Личная биография|История этого человека ещё не записана|Выберите человека в списке/);
+    assert.ok(!html.includes(">Редактировать</button>") && !html.includes("Архивировать человека"));
+    assert.ok(!html.includes("Добавить историю") && !html.includes("Добавить фото или голос"));
   }
 });
 
@@ -125,16 +208,16 @@ test("view controls offer four layouts without removing the existing circle or s
   const markup = renderToStaticMarkup(createElement(FamilyWorkspace, {
     family: fixtureFamily(), focusPersonId: "timur", canEdit: false, canvasScale: 1,
   }));
-  const controls = markup.match(/<div\b[^>]*role="group"[^>]*aria-label="Вид дерева"[\s\S]*?<\/div>/)?.[0];
-  assert.ok(controls, "the view switch needs an accessible group label");
-  const buttons = tags(controls, "button");
-  assert.equal(buttons.length, 4);
+  const controls = markup.match(/<label\b[^>]*for="tree-display-mode"[\s\S]*?<\/label>/)?.[0];
+  assert.ok(controls, "the view select needs an associated label");
+  const options = tags(controls, "option");
+  assert.equal(options.length, 4);
   assert.ok(controls.includes("Круг"));
   assert.ok(controls.includes("Пирамида"));
   assert.ok(controls.includes("Поколения"));
   assert.ok(controls.includes("Слева направо"));
-  assert.deepEqual(buttons.map((tag) => attr(tag, "aria-pressed")), ["false", "false", "true", "false"]);
-  assert.ok(buttons.every((tag) => attr(tag, "type") === "button"));
+  assert.deepEqual(options.map((tag) => attr(tag, "value")), ["radial", "pyramid", "generations", "horizontal"]);
+  assert.equal(attr(options[2], "selected"), "");
   assert.equal(renderedPeople(markup).length, 8);
   assert.match(markup, /data-tree-layout="generations"/);
   visibilityCheckbox(markup);
@@ -163,7 +246,7 @@ test("SSR defaults to all eight people in generation cards with one accessible s
   assert.equal(attr(checkbox, "disabled"), undefined);
   assert.ok(tags(markup, "aside").some((tag) => attr(tag, "aria-label") === "Карточка выбранного человека"));
   assert.ok(markup.includes("Личная биография для проверки выбранной карточки"));
-  assert.ok(markup.includes("Личный текст воспоминания"));
+  assert.ok(!markup.includes("Личный текст воспоминания"));
   assert.ok(markup.includes('id="tree-perspective-person"'));
   assert.ok(markup.includes("Родство относительно"));
   assert.ok(markup.includes('value="timur" selected=""'));
@@ -187,7 +270,7 @@ test("SSR with no selection keeps all eight people and removes personal panels a
   const checkbox = visibilityCheckbox(markup);
   assert.equal(attr(checkbox, "disabled"), "");
   assert.equal(attr(checkbox, "checked"), undefined);
-  assert.ok(tags(markup, "section").some((tag) => hasClass(tag, "family-overview-note")));
+  assert.ok(!markup.includes('id="people-panel"'));
   for (const privateContent of ["Личная биография для проверки выбранной карточки", "Личное событие выбранного человека", "Личный текст воспоминания", "Личная аудиозапись", "/api/test-fixtures/private-audio"]) {
     assert.ok(!markup.includes(privateContent), `unselected overview leaked ${privateContent}`);
   }

@@ -88,26 +88,37 @@ function getRedisClient(): Promise<unknown> | null {
   return redisClientPromise;
 }
 
-async function hitRedis(
+// Redis executes the complete script atomically: a disconnect cannot leave a
+// new counter without expiry. Also repair persistent keys from the old split
+// INCR/PEXPIRE implementation, without extending healthy fixed windows.
+const hitRedisScript = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`;
+
+export async function hitRedis(
   client: {
-    incr(key: string): Promise<number>;
-    pexpire(key: string, ms: number): Promise<number>;
-    pttl(key: string): Promise<number>;
+    eval(script: string, keyCount: number, key: string, windowMs: number): Promise<unknown>;
   },
   key: string,
   limit: number,
   windowMs: number,
 ): Promise<HitResult> {
-  const redisKey = `ratelimit:${key}`;
-  const count = await client.incr(redisKey);
-
-  if (count === 1) {
-    await client.pexpire(redisKey, windowMs);
+  const result = await client.eval(hitRedisScript, 1, `ratelimit:${key}`, windowMs);
+  if (!Array.isArray(result) || result.length !== 2
+    || !Number.isSafeInteger(result[0]) || result[0] < 1
+    || !Number.isSafeInteger(result[1]) || result[1] < 0) {
+    throw new Error("Invalid Redis rate-limit response.");
   }
+  const [count, ttl] = result as [number, number];
 
   if (count > limit) {
-    const ttl = await client.pttl(redisKey);
-    return { allowed: false, retryAfterMs: ttl > 0 ? ttl : windowMs };
+    return { allowed: false, retryAfterMs: ttl };
   }
 
   return { allowed: true, retryAfterMs: 0 };

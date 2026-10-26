@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-25",
+  "archive": {
+    "path": "docs/operations/archive-index-release-pg18-2026-10-25.zip",
+    "sha256": "8bd313893dab222be1118e35b9ed7eec18476c4a7502da87eca5e15f4243c912",
+    "roundtripPayloadsVerified": 26,
+    "roundtripManifestVerified": true
+  },
+  "manifestSha256": "79cc17ae6800d720a000d3e956fb632f8d90ea5728eca8d8fecaa714ddfd832d",
+  "postgresDownload": {
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-18.6-5-windows-x64-binaries.zip",
+    "sha256": "e2246ba91d22345bc3d017586c09ede52d9df180b1eeb480f050445f1cad84e2",
+    "supplierSidecarMatched": true,
+    "installation": "portable isolated runtime, no Windows service"
+  },
+  "toolchain": {
+    "node": "v22.19.0",
+    "prisma": "6.8.2",
+    "packageJsonSha256": "5ef607093e058e900f5cc75a703da2ed524396657d65c34d44ea0ecf62fb2ff3",
+    "packageLockSha256": "8912c5daf4dd44ec31c08e5165cdf1c79a0d9bdc6ca566a0f3375b1a3be2ed24"
+  },
+  "verification": {
+    "unitTestsPassed": 769,
+    "typecheck": true,
+    "lint": true,
+    "independentReview": true
+  },
+  "productionAccess": false,
+  "mailAccess": false
+}

@@ -245,6 +245,7 @@ model Person {
   suppressedAsChild  ParentSuppression[] @relation("SuppressedChild")
 
   @@unique([familyId, firstName, lastName, middleName, birthDate])
+  @@index([familyId, isArchived, id])
   @@index([familyId])
 }
 

@@ -25,6 +25,7 @@ type FamilyAppProps = {
   canEdit: boolean;
   initialFamily: Family;
   initialFocusPersonId: string | null;
+  section?: "tree" | "people" | "memories" | "photos";
 };
 
 type AddFormState = {
@@ -153,6 +154,7 @@ export function FamilyApp({
   canEdit,
   initialFamily,
   initialFocusPersonId,
+  section = "tree",
 }: FamilyAppProps) {
   const [canvasScale, setCanvasScale] = useState(1);
   const [activeSheet, setActiveSheet] = useState<"add" | "batch" | "relationship" | "edit" | "media" | "story" | null>(null);
@@ -186,6 +188,7 @@ export function FamilyApp({
   const focusPerson =
     family.people.find((person) => person.id === selectedPersonId) ?? null;
   const focusPersonId = focusPerson?.id ?? null;
+  const canEditFocus = canEdit && Boolean(focusPerson && focusPerson.detailsLoaded !== false);
   const draftPerson = sheetPersonId ? family.people.find((person) => person.id === sheetPersonId) ?? sheetPerson : null;
   const isDirty = activeSheet === "batch" || activeSheet === "story" ? childDirty
     : activeSheet === "add" ? JSON.stringify(addFormState) !== draftBaseline.current
@@ -265,7 +268,7 @@ export function FamilyApp({
   }
 
   function handleOpenAddRelationship() {
-    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    if (!canEditFocus || !focusPerson || !confirmDiscard()) return;
     discardSheet();
     draftBaseline.current = JSON.stringify({ relativePersonId: "", relationshipKind: "parent" });
     setActiveSheet("relationship");
@@ -293,7 +296,7 @@ export function FamilyApp({
   }
 
   function handleOpenEditPerson() {
-    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    if (!canEditFocus || !focusPerson || !confirmDiscard()) return;
     discardSheet();
     const draft = initialEditFormState(focusPerson);
     draftBaseline.current = JSON.stringify(draft);
@@ -306,7 +309,7 @@ export function FamilyApp({
   }
 
   function handleOpenUploadMedia() {
-    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    if (!canEditFocus || !focusPerson || !confirmDiscard()) return;
     discardSheet();
     setActiveSheet("media");
     setSheetPersonId(focusPerson.id);
@@ -324,7 +327,7 @@ export function FamilyApp({
   }
 
   function openStory(mode: StoryDialogMode, story?: Story) {
-    if (!canEdit || !focusPerson || !confirmDiscard()) return;
+    if (!canEditFocus || !focusPerson || !confirmDiscard()) return;
     discardSheet();
     setActiveSheet("story");
     setSheetPersonId(focusPerson.id);
@@ -563,7 +566,7 @@ export function FamilyApp({
   }
 
   async function handleDeleteMedia(asset: MediaAsset) {
-    if (!canEdit || !focusPerson || isSubmitting || !focusPerson.mediaAssets.some((item) => item.id === asset.id)) return;
+    if (!canEditFocus || !focusPerson || isSubmitting || !focusPerson.mediaAssets.some((item) => item.id === asset.id)) return;
     await runAction({
       request: () =>
         fetch(
@@ -584,7 +587,7 @@ export function FamilyApp({
   }
 
   async function handleArchivePerson() {
-    if (!canEdit || !focusPerson || isSubmitting || !confirmDiscard()) return;
+    if (!canEditFocus || !focusPerson || isSubmitting || !confirmDiscard()) return;
     await runAction({
       request: () =>
         fetch(`/api/family/${family.slug}/people/${focusPerson.id}/archive`, {
@@ -613,6 +616,7 @@ export function FamilyApp({
 
   return (
     <FamilyWorkspace
+      section={section}
       family={family}
       focusPersonId={focusPersonId}
       canEdit={canEdit}
@@ -623,16 +627,16 @@ export function FamilyApp({
       onResetZoom={handleResetZoom}
       onScaleChange={handleScaleChange}
       onOpenAddPerson={canEdit ? handleOpenAddPerson : undefined}
-      onOpenAddRelationship={canEdit && focusPerson ? handleOpenAddRelationship : undefined}
-      onOpenEditPerson={canEdit && focusPerson ? handleOpenEditPerson : undefined}
-      onOpenUploadMedia={canEdit && focusPerson ? handleOpenUploadMedia : undefined}
-      onOpenCreateStory={canEdit && focusPerson ? handleOpenCreateStory : undefined}
-      onEditStory={canEdit && focusPerson ? (story) => openStory("edit", story) : undefined}
-      onDeleteStory={canEdit && focusPerson ? (story) => openStory("delete", story) : undefined}
-      onRestoreStory={canEdit && focusPerson ? (story) => openStory("restore", story) : undefined}
+      onOpenAddRelationship={canEditFocus ? handleOpenAddRelationship : undefined}
+      onOpenEditPerson={canEditFocus ? handleOpenEditPerson : undefined}
+      onOpenUploadMedia={canEditFocus ? handleOpenUploadMedia : undefined}
+      onOpenCreateStory={canEditFocus ? handleOpenCreateStory : undefined}
+      onEditStory={canEditFocus ? (story) => openStory("edit", story) : undefined}
+      onDeleteStory={canEditFocus ? (story) => openStory("delete", story) : undefined}
+      onRestoreStory={canEditFocus ? (story) => openStory("restore", story) : undefined}
       storyFocusRevision={storyFocusRevision}
-      onDeleteMedia={canEdit && focusPerson ? handleDeleteMedia : undefined}
-      onArchivePerson={canEdit && focusPerson ? handleArchivePerson : undefined}
+      onDeleteMedia={canEditFocus ? handleDeleteMedia : undefined}
+      onArchivePerson={canEditFocus ? handleArchivePerson : undefined}
       addPersonSheet={
         activeSheet === "add" ? (
           <PersonFormDialog

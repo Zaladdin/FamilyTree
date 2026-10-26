@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-25T00:59:16.811Z",
+  "server": [
+    {
+      "version": "PostgreSQL 16.15, compiled by Visual C++ build 1944, 64-bit"
+    }
+  ],
+  "prisma": "6.8.2",
+  "syntheticPeople": 421000,
+  "createSha256": "a84eb87e424bea2cc6d9a55e896c7b5c5bec6d475dc905cbb9a6121c4e9ec97d",
+  "rollbackSha256": "86f1956386e23ec112157dbcb0f8ceae0116c7aa6c8635986a7fd1c6e097d502",
+  "events": [
+    {
+      "scenario": "create_lock_timeout",
+      "sqlstate": "55P03",
+      "elapsedMs": 5817.094799999999,
+      "indexPresent": false
+    },
+    {
+      "scenario": "create_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 3600.4464000000007,
+      "indexPresent": false
+    },
+    {
+      "scenario": "create_success",
+      "elapsedMs": 8747.9957,
+      "index": {
+        "valid": true,
+        "ready": true,
+        "definition": "CREATE INDEX \"Person_familyId_isArchived_id_idx\" ON public.\"Person\" USING btree (\"familyId\", \"isArchived\", id)"
+      }
+    },
+    {
+      "scenario": "drop_lock_timeout",
+      "sqlstate": "55P03",
+      "elapsedMs": 6456.143400000001,
+      "indexPresent": true
+    },
+    {
+      "scenario": "drop_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 3397.9997000000003,
+      "indexPresent": true
+    },
+    {
+      "scenario": "rollback_success",
+      "elapsedMs": 2023.2451,
+      "fingerprint": [
+        {
+          "count": "421000",
+          "checksum": "1443485470094926618463"
+        }
+      ]
+    },
+    {
+      "scenario": "migration_session_settings",
+      "lockTimeout": "3s",
+      "statementTimeout": "60s",
+      "verifiedInsideMigration": true
+    },
+    {
+      "scenario": "execution_statement_timeout",
+      "sqlstate": "57014",
+      "elapsedMs": 3051.795299999998
+    }
+  ],
+  "finalHistory": [
+    {
+      "migration_name": "20260722115807_init",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260802000000_member_audit_actions",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928000000_direct_sibling_relationship",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928010000_person_version",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928020000_automatic_parenthood",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928030000_story_lifecycle",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928040000_account_security",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20260928050000_media_lifecycle",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025000000_archive_pagination_index",
+      "finished": true,
+      "rolled": false
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "finished": false,
+      "rolled": true
+    },
+    {
+      "migration_name": "20261025010000_rollback_archive_pagination_index",
+      "finished": true,
+      "rolled": false
+    }
+  ],
+  "finalIndexAbsent": true,
+  "personFingerprintUnchanged": true,
+  "note": "Probe migrations exist only in disposable lab; finalHistory captured before probes. No production connection."
+}
